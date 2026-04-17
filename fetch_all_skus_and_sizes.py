@@ -24,6 +24,7 @@ IMPERSONATE   = "chrome131"
 PAGE_SIZE     = 48
 SLEEP_SEC     = 1.5        # PLP 翻页间隔（秒）
 MAX_RETRIES   = 3
+PLP_WORKERS   = 8          # PLP 翻页并发线程（每个分类）
 
 # availability 并发配置
 AVAIL_WORKERS   = 16       # 默认并发线程数
@@ -124,8 +125,14 @@ def parse_product(p: dict, category: str) -> dict:
     }
 
 # ── 抓取单个分类（PLP 翻页）────────────────────────────────────────────────────
-def fetch_category(session: cf_requests.Session, build_id: str,
-                   slug: str, extra: str, label: str) -> list[dict]:
+def fetch_category(
+    session: cf_requests.Session,
+    build_id: str,
+    slug: str,
+    extra: str,
+    label: str,
+    plp_workers: int,
+) -> list[dict]:
     print(f"\n[{label}] 开始抓取 ...", flush=True)
     first = fetch_page(session, build_id, slug, extra, 0)
     if not first:
@@ -139,16 +146,32 @@ def fetch_category(session: cf_requests.Session, build_id: str,
     print(f"  总数: {total}  (需翻 {pages} 页)")
 
     results = [parse_product(p, label) for p in products]
-    for page_no in range(1, pages):
-        start = page_no * PAGE_SIZE
-        time.sleep(SLEEP_SEC)
-        data = fetch_page(session, build_id, slug, extra, start)
-        if not data:
-            print(f"  page {page_no+1} 失败，跳过")
-            continue
-        ps = data.get("pageProps", {}).get("products", [])
-        results.extend(parse_product(p, label) for p in ps)
-        print(f"  start={start:5d}  已获取 {len(results):5d}/{total}", end="\r", flush=True)
+    if pages > 1:
+        starts = [page_no * PAGE_SIZE for page_no in range(1, pages)]
+        done_pages = 1
+        with ThreadPoolExecutor(max_workers=max(1, plp_workers)) as executor:
+            futures = {
+                executor.submit(fetch_page, session, build_id, slug, extra, start): start
+                for start in starts
+            }
+            for future in as_completed(futures):
+                start = futures[future]
+                done_pages += 1
+                try:
+                    data = future.result()
+                except Exception as e:
+                    print(f"\n  start={start} 异常: {e}")
+                    data = None
+                if not data:
+                    print(f"  page {start // PAGE_SIZE + 1} 失败，跳过")
+                    continue
+                ps = data.get("pageProps", {}).get("products", [])
+                results.extend(parse_product(p, label) for p in ps)
+                print(
+                    f"  page {done_pages}/{pages}  已获取 {len(results):5d}/{total}",
+                    end="\r",
+                    flush=True,
+                )
 
     print(f"  完成: {len(results)} 条                    ")
     return results
@@ -277,11 +300,15 @@ def main():
     parser.add_argument("--category",  help="只抓单个分类 slug（如 sale / men-shoes）")
     parser.add_argument("--out",       default=f"result/adidas_prices_{ts}.json",
                         help="输出 JSON 文件（默认带时间戳）")
+    parser.add_argument("--plp-workers", type=int, default=PLP_WORKERS,
+                        help=f"PLP 翻页并发线程数（默认 {PLP_WORKERS}）")
     parser.add_argument("--no-sizes",  action="store_true",
                         help="跳过尺码/库存抓取")
     parser.add_argument("--prev",      help="上一轮输出的 JSON；提供后启用智能增量，"
                         "稳定库存直接复用，低库存/新SKU 重新拉取")
     args = parser.parse_args()
+    if args.plp_workers <= 0:
+        parser.error("--plp-workers 必须大于 0")
 
     session = cf_requests.Session()
 
@@ -317,7 +344,14 @@ def main():
     # 抓 PLP 列表
     all_results: list[dict] = []
     for slug, extra, label, _ in cats:
-        results = fetch_category(session, build_id, slug, extra, label)
+        results = fetch_category(
+            session,
+            build_id,
+            slug,
+            extra,
+            label,
+            plp_workers=args.plp_workers,
+        )
         all_results.extend(results)
         time.sleep(SLEEP_SEC * 2)
 
