@@ -4,19 +4,20 @@ Adidas PLP 全量爬取脚本
 无需代理、无需 cookie，直接可用。
 
 用法:
-  python fetch_plp.py                              # 抓全部分类，含尺码库存
-  python fetch_plp.py --no-sizes                   # 不抓尺码（更快）
-  python fetch_plp.py --category men-shoes         # 只抓男鞋
-  python fetch_plp.py --build-id <id>              # 手动指定 buildId
-  python fetch_plp.py --prev result/prev.json      # 智能增量：复用稳定库存，只重拉低库存/新SKU
-  python fetch_plp.py --out result/prices.json     # 指定输出文件
+  python fetch_all_skus_and_sizes.py                              # 抓全部分类，含尺码库存
+  python fetch_all_skus_and_sizes.py --no-sizes                   # 不抓尺码（更快）
+  python fetch_all_skus_and_sizes.py --category men-shoes         # 只抓男鞋
+  python fetch_all_skus_and_sizes.py --build-id <id>              # 手动指定 buildId
+  python fetch_all_skus_and_sizes.py --prev result/prev.json      # 智能增量：复用稳定库存，只重拉低库存/新SKU
+  python fetch_all_skus_and_sizes.py --out result/prices.json     # 指定输出文件
 """
-import argparse, json, time, re, sys, threading, random
+import argparse, json, time, sys, random
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from curl_cffi import requests as cf_requests
+from adidas_monitor import check_sku
 
 # ── 配置 ───────────────────────────────────────────────────────────────────────
 IMPERSONATE   = "chrome131"
@@ -25,8 +26,10 @@ SLEEP_SEC     = 1.5        # PLP 翻页间隔（秒）
 MAX_RETRIES   = 3
 
 # availability 并发配置
-AVAIL_WORKERS  = 20        # 并发线程数
-AVAIL_RATE     = 8.0       # 全局最大请求速率（req/s），令牌桶上限
+AVAIL_WORKERS   = 16       # 默认并发线程数
+AVAIL_RETRIES   = 4
+AVAIL_MIN_SLEEP = 0.6      # 每线程请求后的随机等待
+AVAIL_MAX_SLEEP = 1.0
 # 智能增量：qty <= 此值 或 有 LOW_STOCK 尺码时，强制重新拉库存
 LOW_STOCK_QTY  = 5
 
@@ -46,29 +49,31 @@ CATEGORIES = [
 ]
 
 # ── buildId 管理 ───────────────────────────────────────────────────────────────
-KNOWN_BUILD_ID = "tic2g3qeBH9nH_T7EDae-"
 BUILD_ID_CACHE = Path(__file__).parent / ".build_id_cache"
 
-def discover_build_id(session: cf_requests.Session) -> str:
-    cached = BUILD_ID_CACHE.read_text().strip() if BUILD_ID_CACHE.exists() else None
-    candidates = []
-    if cached:
-        candidates.append(("缓存", cached))
-    if KNOWN_BUILD_ID not in [c[1] for c in candidates]:
-        candidates.append(("默认", KNOWN_BUILD_ID))
+def _validate_build_id(session: cf_requests.Session, bid: str, source: str) -> str | None:
+    print(f"尝试 buildId ({source}): {bid} ...", end=" ", flush=True)
+    try:
+        test_url = BASE_URL.format(build_id=bid, slug="accessories") + "?start=0&path=us"
+        r = session.get(test_url, impersonate=IMPERSONATE, timeout=20)
+        if r.status_code == 200:
+            print("有效!")
+            BUILD_ID_CACHE.write_text(bid)
+            return bid
+        print(f"无效 ({r.status_code})")
+    except Exception as e:
+        print(f"错误: {e}")
+    return None
 
-    for source, bid in candidates:
-        print(f"尝试 buildId ({source}): {bid} ...", end=" ", flush=True)
-        try:
-            test_url = BASE_URL.format(build_id=bid, slug="accessories") + "?start=0&path=us"
-            r = session.get(test_url, impersonate=IMPERSONATE, timeout=20)
-            if r.status_code == 200:
-                print("有效!")
-                BUILD_ID_CACHE.write_text(bid)
-                return bid
-            print(f"无效 ({r.status_code})")
-        except Exception as e:
-            print(f"错误: {e}")
+def load_build_id(session: cf_requests.Session, manual_build_id: str | None) -> str | None:
+    if manual_build_id:
+        return _validate_build_id(session, manual_build_id, "命令行")
+
+    cached = BUILD_ID_CACHE.read_text().strip() if BUILD_ID_CACHE.exists() else None
+    if cached:
+        return _validate_build_id(session, cached, "缓存")
+
+    print("未提供 buildId，且缓存文件不存在。", flush=True)
     return None
 
 # ── PLP 单页请求 ───────────────────────────────────────────────────────────────
@@ -148,77 +153,40 @@ def fetch_category(session: cf_requests.Session, build_id: str,
     print(f"  完成: {len(results)} 条                    ")
     return results
 
-# ── 令牌桶限速器 ───────────────────────────────────────────────────────────────
-class TokenBucket:
-    """漏桶限速，控制全局请求速率"""
-    def __init__(self, rate: float):
-        self.rate      = rate          # req/s
-        self.tokens    = rate
-        self.last_time = time.monotonic()
-        self._lock     = threading.Lock()
-        # 429 全局冷却：收到 429 时所有线程都降速
-        self._cooldown_until = 0.0
-
-    def acquire(self):
-        # 如果处于 429 冷却期，先等
-        cool = self._cooldown_until - time.monotonic()
-        if cool > 0:
-            time.sleep(cool)
-
-        with self._lock:
-            now    = time.monotonic()
-            elapsed = now - self.last_time
-            self.tokens = min(self.rate, self.tokens + elapsed * self.rate)
-            self.last_time = now
-            if self.tokens >= 1:
-                self.tokens -= 1
-                return
-            wait = (1 - self.tokens) / self.rate
-        # 在锁外等待
-        time.sleep(wait)
-
-    def on_429(self, backoff: float = 10.0):
-        """收到 429 时设置全局冷却"""
-        self._cooldown_until = time.monotonic() + backoff
-
-# ── availability 请求（带令牌桶 + 指数退避）────────────────────────────────────
-_thread_local = threading.local()
-
-def _thread_session() -> cf_requests.Session:
-    if not hasattr(_thread_local, "session"):
-        _thread_local.session = cf_requests.Session()
-    return _thread_local.session
-
-def fetch_availability(sku: str, bucket: TokenBucket) -> dict | None:
-    url     = AVAIL_URL.format(sku=sku)
-    session = _thread_session()
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        bucket.acquire()
-        # 随机抖动，避免多线程同时打出
-        time.sleep(random.uniform(0, 0.15))
+# ── availability 请求（复用 adidas_monitor 的单 SKU 逻辑）──────────────────────
+def fetch_availability(
+    sku: str,
+    retries: int = AVAIL_RETRIES,
+    min_sleep: float = AVAIL_MIN_SLEEP,
+    max_sleep: float = AVAIL_MAX_SLEEP,
+) -> dict | None:
+    sku = sku.upper().strip()
+    last_err = ""
+    for attempt in range(1, retries + 1):
         try:
-            r = session.get(url, impersonate=IMPERSONATE, timeout=15)
-            if r.status_code == 200:
-                sizes = [
-                    {
-                        "size":   v["size"],
-                        "status": v["availability_status"],
-                        "qty":    v.get("availability", 0),
-                    }
-                    for v in r.json().get("variation_list", [])
-                ]
-                return {"sku": sku, "sizes": sizes}
-            elif r.status_code == 429:
-                backoff = min(5 * 2 ** attempt, 60)
-                bucket.on_429(backoff)
-                time.sleep(backoff + random.uniform(0, 2))
-            elif r.status_code == 403:
-                time.sleep(5 * attempt)
-            else:
-                time.sleep(1)
-        except Exception:
-            time.sleep(attempt)
+            result = check_sku(sku)
+            if max_sleep > 0:
+                time.sleep(random.uniform(min_sleep, max_sleep))
+            return {
+                "sku": sku,
+                "sizes": result.get("sizes", []),
+                "overall_status": result.get("overall_status", "UNKNOWN"),
+                "checked_at": result.get("checked_at"),
+            }
+        except Exception as e:
+            last_err = str(e)
+            if "404" in last_err:
+                print(f"\n  [404] {sku} 已下架/不存在，跳过重试", flush=True)
+                return {
+                    "sku": sku,
+                    "sizes": [],
+                    "overall_status": "NOT_FOUND",
+                    "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+            print(f"\n  [ERR] {sku} attempt={attempt}/{retries} {last_err}", flush=True)
+            if attempt < retries:
+                time.sleep(min(3 * attempt, 10))
+    print(f"\n  [FAIL] {sku} 全部重试耗尽: {last_err}", flush=True)
     return None
 
 # ── 智能增量判断：判断一个 SKU 是否需要重新拉库存 ──────────────────────────────
@@ -235,8 +203,6 @@ def _needs_refresh(prev_sizes: list[dict]) -> bool:
 
 # ── 主库存抓取（含增量复用逻辑）──────────────────────────────────────────────
 def enrich_sizes(items: list[dict], prev_map: dict[str, list] | None = None) -> None:
-    bucket = TokenBucket(rate=AVAIL_RATE)
-
     # 分类：哪些需要重拉，哪些可以复用
     to_fetch   = []
     reused     = 0
@@ -261,18 +227,20 @@ def enrich_sizes(items: list[dict], prev_map: dict[str, list] | None = None) -> 
 
     total = len(to_fetch)
     print(f"\n[尺码库存] 需重拉: {total}  复用: {reused}  售罄跳过: {skipped}  "
-          f"线程: {AVAIL_WORKERS}  速率: {AVAIL_RATE} req/s", flush=True)
+          f"线程: {AVAIL_WORKERS}  sleep={AVAIL_MIN_SLEEP}-{AVAIL_MAX_SLEEP}s", flush=True)
 
     if not to_fetch:
         print("  全部复用，跳过请求")
         return
 
     sku_to_item = {item["sku"]: item for item in to_fetch}
-    done = 0
+    done    = 0
+    failed  = 0
+    t_start = time.monotonic()
 
     with ThreadPoolExecutor(max_workers=AVAIL_WORKERS) as executor:
         futures = {
-            executor.submit(fetch_availability, sku, bucket): sku
+            executor.submit(fetch_availability, sku): sku
             for sku in sku_to_item
         }
         for future in as_completed(futures):
@@ -282,12 +250,23 @@ def enrich_sizes(items: list[dict], prev_map: dict[str, list] | None = None) -> 
                 result = future.result()
                 if result:
                     sku_to_item[sku]["sizes"] = result["sizes"]
-            except Exception:
-                pass
+                    sku_to_item[sku]["overall_status"] = result.get("overall_status", "UNKNOWN")
+                    if result.get("checked_at"):
+                        sku_to_item[sku]["checked_at"] = result["checked_at"]
+                else:
+                    failed += 1
+            except Exception as e:
+                print(f"\n  [EXCEPT] {sku}: {e}", flush=True)
+                failed += 1
             if done % 50 == 0 or done == total:
-                print(f"  {done}/{total} 完成", end="\r", flush=True)
+                elapsed = time.monotonic() - t_start
+                rate    = done / elapsed if elapsed > 0 else 0
+                eta     = int((total - done) / rate) if rate > 0 else 0
+                print(f"  {done}/{total}  {rate:.1f} req/s  ETA {eta}s  fail={failed}",
+                      end="\r", flush=True)
 
-    print(f"  尺码库存抓取完毕（重拉 {total}，复用 {reused}）          ")
+    elapsed = time.monotonic() - t_start
+    print(f"\n  完毕: {total} 个  耗时 {elapsed:.0f}s  fail={failed}  复用={reused}")
 
 # ── 主函数 ─────────────────────────────────────────────────────────────────────
 def main():
@@ -307,10 +286,10 @@ def main():
     session = cf_requests.Session()
 
     # buildId
-    build_id = args.build_id or discover_build_id(session)
+    build_id = load_build_id(session, args.build_id)
     if not build_id:
-        print("无法获取 buildId，请用 --build-id 手动传入")
-        print("获取方法: 浏览器打开 adidas.com → Console → window.__NEXT_DATA__.buildId")
+        print("当前 buildId 不可用。请先运行: python fetch_build_id.py", flush=True)
+        print("或手动传入: python fetch_all_skus_and_sizes.py --build-id <id>", flush=True)
         sys.exit(1)
     print(f"buildId: {build_id}")
 
