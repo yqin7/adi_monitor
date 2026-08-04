@@ -9,3 +9,6 @@ __pycache__/
 
 # Local secrets
 .env
+
+# IDE project files
+.idea/
