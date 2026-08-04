@@ -55,6 +55,19 @@ python fetch_all_skus_and_sizes.py --no-sizes
 ```powershell
 python fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
 ```
+## MongoDB 写入进度
+
+抓取完商品后，终端会继续显示 MongoDB 分批写入进度：
+
+```text
+MongoDB 开始同步: 12275 个 SKU
+  products: 500/12275
+  price_history: 500/12275
+  ...
+MongoDB 写入完成: products=12275, price_history=12275
+```
+
+因此最后一页抓完后如果暂时没有新的商品统计日志，通常是在进行 MongoDB 批量 upsert。
 ## 失败页面重试
 
 翻页请求如果遇到 TLS、网络超时或其他临时错误，会先记录分类和页码，不会立即丢弃。所有分类抓取结束后，脚本会集中重试失败页面，并把恢复的数据合并到本次 MongoDB 批次。

@@ -62,9 +62,14 @@ class MongoStore:
 
         now = datetime.now(timezone.utc).replace(microsecond=0)
         batch_id = source_file or now.strftime("price_%Y%m%d_%H%M%S")
+        total = len(products) if hasattr(products, "__len__") else None
+        total_label = str(total) if total is not None else "?"
         product_ops = []
         history_ops = []
         count = 0
+        products_written = 0
+        history_written = 0
+        print(f"MongoDB 开始同步: {total_label} 个 SKU", flush=True)
 
         for item in products:
             sku = str(item.get("sku", "")).strip().upper()
@@ -109,16 +114,29 @@ class MongoStore:
             count += 1
 
             if len(product_ops) >= 500:
+                batch_size = len(product_ops)
                 self._collection.bulk_write(product_ops, ordered=False)
+                products_written += batch_size
                 product_ops.clear()
+                print(f"  products: {products_written}/{total_label}", flush=True)
             if len(history_ops) >= 500:
+                batch_size = len(history_ops)
                 self._history.bulk_write(history_ops, ordered=False)
+                history_written += batch_size
                 history_ops.clear()
+                print(f"  price_history: {history_written}/{total_label}", flush=True)
 
         if product_ops:
+            batch_size = len(product_ops)
             self._collection.bulk_write(product_ops, ordered=False)
+            products_written += batch_size
+            print(f"  products: {products_written}/{total_label}", flush=True)
         if history_ops:
+            batch_size = len(history_ops)
             self._history.bulk_write(history_ops, ordered=False)
+            history_written += batch_size
+            print(f"  price_history: {history_written}/{total_label}", flush=True)
+        print(f"MongoDB 写入完成: products={products_written}, price_history={history_written}", flush=True)
         return count
 
     def get_products(self, skus: list[str] | None = None) -> list[dict[str, Any]]:
