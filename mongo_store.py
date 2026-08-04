@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 
+
+WRITE_BATCH_SIZE = 5000
 class MongoStore:
     def __init__(self, uri: str, database: str = "adidas_monitor", collection: str = "products"):
         try:
@@ -60,11 +62,17 @@ class MongoStore:
     ) -> int:
         from pymongo import UpdateOne
 
+        from pymongo.errors import BulkWriteError
         now = datetime.now(timezone.utc).replace(microsecond=0)
         batch_id = source_file or now.strftime("price_%Y%m%d_%H%M%S")
+        total = len(products) if hasattr(products, "__len__") else None
+        total_label = str(total) if total is not None else "?"
         product_ops = []
-        history_ops = []
+        history_docs = []
         count = 0
+        products_written = 0
+        history_written = 0
+        print(f"MongoDB 开始同步: {total_label} 个 SKU", flush=True)
 
         for item in products:
             sku = str(item.get("sku", "")).strip().upper()
@@ -99,28 +107,45 @@ class MongoStore:
                     "is_sold_out": item.get("is_sold_out", False),
                     "name": item.get("name"),
                 }
-                history_ops.append(
-                    UpdateOne(
-                        {"sku": sku, "batch_id": batch_id},
-                        {"$setOnInsert": history_doc},
-                        upsert=True,
-                    )
-                )
+                # Price history is append-only. A plain insert is faster than
+                # an UpdateOne(upsert=True) because each new batch has a new batch_id.
+                history_docs.append(history_doc)
             count += 1
 
-            if len(product_ops) >= 500:
+            if len(product_ops) >= WRITE_BATCH_SIZE:
+                batch_size = len(product_ops)
                 self._collection.bulk_write(product_ops, ordered=False)
+                products_written += batch_size
                 product_ops.clear()
-            if len(history_ops) >= 500:
-                self._history.bulk_write(history_ops, ordered=False)
-                history_ops.clear()
+                print(f"  products: {products_written}/{total_label}", flush=True)
+            if len(history_docs) >= WRITE_BATCH_SIZE:
+                history_written += self._insert_history(history_docs, BulkWriteError)
+                history_docs.clear()
+                print(f"  price_history: {history_written}/{total_label}", flush=True)
 
         if product_ops:
+            batch_size = len(product_ops)
             self._collection.bulk_write(product_ops, ordered=False)
-        if history_ops:
-            self._history.bulk_write(history_ops, ordered=False)
+            products_written += batch_size
+            print(f"  products: {products_written}/{total_label}", flush=True)
+        if history_docs:
+            history_written += self._insert_history(history_docs, BulkWriteError)
+            print(f"  price_history: {history_written}/{total_label}", flush=True)
+        print(f"MongoDB 写入完成: products={products_written}, price_history={history_written}", flush=True)
         return count
 
+    def _insert_history(self, documents: list[dict[str, Any]], bulk_write_error: type[Exception]) -> int:
+        """Insert one append-only history batch and tolerate same-batch reruns."""
+        try:
+            result = self._history.insert_many(documents, ordered=False)
+            return len(result.inserted_ids)
+        except bulk_write_error as exc:
+            details = getattr(exc, "details", {}) or {}
+            write_errors = details.get("writeErrors", [])
+            non_duplicate = [error for error in write_errors if error.get("code") != 11000]
+            if non_duplicate:
+                raise
+            return int(details.get("nInserted", 0))
     def get_products(self, skus: list[str] | None = None) -> list[dict[str, Any]]:
         query = {}
         if skus:

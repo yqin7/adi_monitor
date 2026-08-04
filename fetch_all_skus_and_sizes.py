@@ -109,25 +109,41 @@ def fetch_page(session: cf_requests.Session, build_id: str,
                category: str | None = None,
                record_failure: bool = True) -> dict | None:
     url = BASE_URL.format(build_id=build_id, slug=slug) + f"?start={start}&{extra}"
+    had_error = False
+    last_error = ""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             r = session.get(url, impersonate=IMPERSONATE, timeout=25)
             if r.status_code == 200:
+                if had_error and record_failure:
+                    FAILED_PAGES.append({
+                        "category": category or slug,
+                        "slug": slug,
+                        "extra": extra,
+                        "start": start,
+                        "error": last_error,
+                    })
                 return r.json()
             elif r.status_code == 404:
                 print(f"\n  404 (buildId 可能已过期): {url[:80]}")
                 return None
+            had_error = True
+            last_error = f"HTTP {r.status_code}"
             print(f"\n  {r.status_code} retry {attempt}")
             time.sleep(SLEEP_SEC * 2)
         except Exception as e:
+            had_error = True
+            last_error = str(e)
             print(f"\n  ERROR retry {attempt}: {e}")
             time.sleep(SLEEP_SEC * 2)
+
     if record_failure:
         FAILED_PAGES.append({
             "category": category or slug,
             "slug": slug,
             "extra": extra,
             "start": start,
+            "error": last_error,
         })
     return None
 
