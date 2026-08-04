@@ -1,386 +1,178 @@
 # Adidas Monitor
 
-用于抓取 Adidas US 官网当前商品的 SKU、价格、折扣、分类，以及尺码库存。
+抓取 Adidas US 官网商品数据，并统一存入 MongoDB Atlas。项目不再把商品、价格或尺码数据保存为本地 JSON。
 
-当前项目保留 4 个正式脚本：
-
-- `fetch_all_skus_and_sizes.py`
-- `fetch_sizes.py`
-- `adidas_monitor.py`
-- `fetch_build_id.py`
-
-## 环境依赖
+## 环境准备
 
 - Python 3.10+
 - `curl_cffi`
+- `pymongo`
+- `python-dotenv`
+- Playwright Chromium（仅在 buildId 缓存缺失或失效时自动获取）
 
 安装依赖：
 
-```bash
-pip install curl_cffi
+```powershell
+pip install curl_cffi pymongo python-dotenv playwright
+playwright install chromium
 ```
 
-## 目录说明
+在项目根目录创建 `.env`：
 
-- `result/`
-  存放抓取结果 JSON
-- `.build_id_cache`
-  缓存最近可用的 Adidas Next.js `buildId`
+```env
+MONGODB_URI=mongodb+srv://用户名:密码@集群地址/?retryWrites=true&w=majority
+MONGODB_DATABASE=adidas_monitor
+MONGODB_COLLECTION=products
+```
 
-## 脚本总览
+`.env`、`.build_id_cache`、`__pycache__` 和 Python 字节码已加入 `.gitignore`。
 
-### `fetch_all_skus_and_sizes.py`
+## `fetch_all_skus_and_sizes.py` 主命令运行流程
 
-主脚本。先从 Adidas PLP 接口抓全站商品列表，再按 SKU 抓尺码和库存。
+直接运行：
 
-适用场景：
-
-- 第一次全量抓取
-- 定时跑整站价格 + 尺码库存
-- 结合 `--prev` 做增量刷新
-
-默认抓取分类：
-
-- `men-clothing`
-- `women-clothing`
-- `kids-clothing`
-- `men-shoes`
-- `women-shoes`
-- `kids-shoes`
-- `accessories`
-- `sale`
-
-默认输出：
-
-- `result/adidas_prices_YYYYMMDD_HHMM.json`
-
-### `fetch_sizes.py`
-
-独立尺码刷新脚本。读取已有 JSON，只补充或刷新 `sizes`，不重新抓 PLP 商品列表。
-
-当前正式方案会复用 `adidas_monitor.py` 的单 SKU 查询逻辑，并以多线程方式抓取尺码。
-
-适用场景：
-
-- 已经有一份商品列表 JSON
-- 只想补尺码库存
-- 想调不同并发 / 速率反复测试尺码接口
-
-### `adidas_monitor.py`
-
-单 SKU 查询/监控脚本。适合手动查某几个商品。
-
-适用场景：
-
-- 调试某个 SKU
-- 人工验证价格和库存
-- 持续 watch 某几个目标商品
-
-### `fetch_build_id.py`
-
-独立获取 Adidas 最新 `buildId` 的脚本。
-
-适用场景：
-
-- `fetch_all_skus_and_sizes.py` 提示当前 `buildId` 无效
-- 想提前刷新 `.build_id_cache`
-- 想手动查看当前站点最新 `buildId`
-
-## `fetch_all_skus_and_sizes.py` 用法
-
-### 基本命令
-
-```bash
+```powershell
 python fetch_all_skus_and_sizes.py
 ```
 
-只抓商品价格，不抓尺码：
+默认会依次：
 
-```bash
+1. 验证缓存中的 buildId；缺失或失效时自动获取新的 buildId。
+2. 抓取 8 个内置分类的 SKU 和价格。
+3. 按 SKU 去重并更新 MongoDB 的 `products`。
+4. 将本次价格快照追加到 `price_history`，生成新的 `batch_id`。
+5. 抓取尺码和库存；稳定尺码从 MongoDB 复用，低库存、新 SKU 和无尺码商品重新请求。
+6. 将尺码结果更新回 `products`，不新增价格历史。
+
+日常只更新 SKU 和价格，跳过较慢的尺码接口：
+
+```powershell
 python fetch_all_skus_and_sizes.py --no-sizes
 ```
 
-只抓单个分类：
+只抓一个分类：
 
-```bash
-python fetch_all_skus_and_sizes.py --category men-shoes
-python fetch_all_skus_and_sizes.py --category accessories
-python fetch_all_skus_and_sizes.py --category sale
+```powershell
+python fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
 ```
+## 日常价格抓取
 
-先刷新 `buildId` 缓存：
+默认抓取全部固定分类的 SKU 和价格，直接写入 MongoDB：
 
-```bash
-python fetch_build_id.py
-```
-
-手动指定 `buildId`：
-
-```bash
-python fetch_all_skus_and_sizes.py --build-id your_build_id
-```
-
-指定输出文件：
-
-```bash
-python fetch_all_skus_and_sizes.py --out result/all_products.json
-```
-
-使用上一轮结果做增量复用：
-
-```bash
-python fetch_all_skus_and_sizes.py --prev result/adidas_prices_20260416_1408.json
-```
-
-### 参数说明
-
-- `--build-id`
-  手动传入 Adidas Next.js `buildId`。不传时只读取 `.build_id_cache`。
-- `--category`
-  只抓一个分类 slug。
-- `--out`
-  输出文件路径。默认自动生成带时间戳文件名。
-- `--no-sizes`
-  跳过尺码/库存抓取，只保存商品列表和价格。
-- `--prev`
-  传入上一轮结果文件，启用智能增量复用。
-
-### 输出字段
-
-主脚本输出的每个商品大致包含：
-
-- `sku`
-- `name`
-- `subtitle`
-- `category`
-- `url`
-- `sale_price`
-- `orig_price`
-- `discount_pct`
-- `is_sold_out`
-- `colour_variations`
-- `rating`
-- `rating_count`
-- `sizes`
-- `scraped_at`
-
-### 抓取逻辑
-
-1. 先获取或复用 `buildId`
-2. 通过 `/plp-app/_next/data/...` 拉各分类商品列表
-3. 合并去重 SKU
-4. 先保存一版不含尺码的价格快照
-5. 再调用 `/api/products/{sku}/availability` 补 `sizes`
-
-### 404 / 429 行为
-
-- `404`
-  视为商品下架、卖完或不可用，直接跳过，不再重试。
-- `429`
-  触发全局冷却，并按指数退避重试。
-
-## `fetch_sizes.py` 用法
-
-### 基本命令
-
-读取已有结果并补尺码：
-
-```bash
-python fetch_sizes.py result/adidas_prices_20260416_1408.json
-```
-
-输出到新文件：
-
-```bash
-python fetch_sizes.py result/adidas_prices_20260416_1408.json --out result/with_sizes.json
-```
-
-强制重拉全部 SKU：
-
-```bash
-python fetch_sizes.py result/adidas_prices_20260416_1408.json --force
-```
-
-只处理前 200 个 SKU：
-
-```bash
-python fetch_sizes.py result/adidas_prices_20260416_1408.json --limit 200
-```
-
-自定义并发和速率：
-
-```bash
-python fetch_sizes.py result/adidas_prices_20260416_1408.json --workers 32 --retries 4 --min-sleep 0.6 --max-sleep 1.0
-```*** End Patch```}ிjson to=functions.ApplyPatch अंत  әһвал  assistant to=functions.ApplyPatch +#+#+#+#+#+commentary ैम*** Begin Patch
-
-### 参数说明
-
-- `input`
-  输入 JSON 文件路径。
-- `--out`
-  输出文件路径；不传则覆盖原文件。
-- `--force`
-  强制重拉全部 SKU，忽略已有 `sizes` 和 `is_sold_out`。
-- `--limit`
-  只处理前 N 个 SKU，便于测试。
-- `--workers`
-  并发线程数。
-- `--retries`
-  单 SKU 最大重试次数。
-- `--min-sleep`
-  每个线程在成功请求后的最小随机等待秒数。
-- `--max-sleep`
-  每个线程在成功请求后的最大随机等待秒数。
-
-### 默认行为
-
-不加 `--force` 时：
-
-- 已售罄商品会跳过
-- 已有有效 `sizes` 的商品会复用
-- 低库存 / `LOW_STOCK` 商品会重新拉取
-
-## `adidas_monitor.py` 用法
-
-### 基本命令
-
-查一个 SKU：
-
-```bash
-python adidas_monitor.py JR5408
-```
-
-查多个 SKU：
-
-```bash
-python adidas_monitor.py JR5408 JR5410
-```
-
-JSON 输出：
-
-```bash
-python adidas_monitor.py IJ7058 --json
-```
-
-持续监控：
-
-```bash
-python adidas_monitor.py --watch IJ7058
-python adidas_monitor.py --watch IJ7058 JR5408 --interval 60
-```
-
-### 参数说明
-
-- `skus`
-  一个或多个 SKU。不传时默认 `JR5408`。
-- `--watch`
-  持续监控模式。
-- `--interval`
-  监控刷新间隔，单位秒，默认 `300`。
-- `--json`
-  以 JSON 格式输出。
-
-## 推荐工作流
-
-### 方案 1：全量抓取
-
-```bash
-python fetch_all_skus_and_sizes.py
-```
-
-### 方案 2：先抓价格，后补尺码
-
-```bash
+```powershell
+$env:PYTHONIOENCODING="utf-8"
 python fetch_all_skus_and_sizes.py --no-sizes
-python fetch_sizes.py result/adidas_prices_20260416_1408.json
 ```
 
-### 方案 3：每日增量更新
+这会：
 
-```bash
-python fetch_all_skus_and_sizes.py --prev result/adidas_prices_20260416_1408.json
+1. 抓取各分类商品列表并按 SKU 去重。
+2. 更新 `products` 中的最新商品和价格。
+3. 向 `price_history` 追加本次价格快照。
+
+只抓一个分类：
+
+```powershell
+python fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
 ```
 
-### 方案 4：手动验证单个商品
+## 每日增量更新
 
-```bash
-python adidas_monitor.py IJ7058
+价格和 SKU 的日常更新直接执行：
+
+```powershell
+python fetch_all_skus_and_sizes.py --no-sizes
 ```
 
-## 常见问题
+脚本会把最新商品 upsert 到 MongoDB，并为本次价格抓取生成新的 `batch_id`。不使用上一轮本地文件，也不会生成本地 JSON。
 
-### 1. 为什么会有 `404`
+如果需要更新部分重点商品的尺码：
 
-通常表示：
+```powershell
+python fetch_sizes.py --sku JY8928 JR5408
+```
+## 重点商品尺码抓取
 
-- SKU 已下架
-- 商品不存在
-- 商品暂时不可用
+尺码接口较慢，日常不全站抓取。按 SKU 从 MongoDB 读取并更新：
 
-当前逻辑中 `404` 不会重试。
+```powershell
+python fetch_sizes.py --sku JY8928 JR5408
+```
 
-### 2. 为什么会有 `429`
+只处理前几个 SKU：
 
-表示触发 Adidas 接口限流。可以尝试：
+```powershell
+python fetch_sizes.py --sku JY8928 JR5408 --limit 1
+```
 
-- 降低 `--workers`
-- 降低 `--rate`
-- 分批次跑
+强制刷新已有尺码：
 
-### 3. `buildId` 失效怎么办
+```powershell
+python fetch_sizes.py --sku JY8928 --force
+```
 
-先运行：
+全量抓取时如果不加 `--no-sizes`，脚本会从 MongoDB 读取上一轮尺码：稳定库存复用，低库存、新 SKU 和无尺码商品重新请求。
 
-```bash
+## MongoDB 数据结构
+
+### `products`
+
+每个 SKU 一条当前状态记录，保存最新商品信息、价格、折扣和可选的尺码库存。价格和商品字段会更新；尺码抓取只更新实际处理的 SKU。
+
+### `price_history`
+
+每次价格抓取追加一条记录，不覆盖旧价格。字段固定为：
+
+```text
+sku
+batch_id
+discount_pct
+is_sold_out
+name
+observed_at
+orig_price
+sale_price
+```
+
+唯一约束为 `sku + batch_id`。批次号示例：`price_20260806_143000`。
+
+## buildId
+
+运行主脚本时会：
+
+1. 验证命令行 buildId（如果传入）。
+2. 验证 `.build_id_cache`。
+3. 缓存缺失或失效时，自动打开 Adidas 页面探测新的 buildId。
+4. 验证成功后写入缓存并继续抓取。
+
+通常不需要手动运行：
+
+```powershell
 python fetch_build_id.py
 ```
 
-或者手动传入新的：
+## 单个商品即时查询
 
-```bash
-python fetch_all_skus_and_sizes.py --build-id <id>
+`adidas_monitor.py` 用于临时查询少量 SKU，不负责全站入库：
+
+```powershell
+python adidas_monitor.py JY8928
+python adidas_monitor.py --watch JY8928 --interval 300
 ```
 
-## `fetch_build_id.py` 用法
+## 分类说明
 
-### 基本命令
+当前内置分类为：
 
-```bash
-python fetch_build_id.py
+```text
+men-clothing
+women-clothing
+kids-clothing
+men-shoes
+women-shoes
+kids-shoes
+accessories
+sale
 ```
 
-可见浏览器模式：
-
-```bash
-python fetch_build_id.py --headed
-```
-
-指定页面 URL：
-
-```bash
-python fetch_build_id.py --url https://www.adidas.com/us/accessories
-```
-
-### 参数说明
-
-- `--url`
-  自定义要尝试的页面 URL，可多次传入。
-- `--timeout`
-  页面加载超时，单位毫秒。
-- `--headed`
-  使用可见浏览器打开页面。
-- `--no-cache`
-  只输出结果，不写入 `.build_id_cache`。
-
-### 4. 输出文件会不会被覆盖
-
-- `fetch_all_skus_and_sizes.py`
-  默认不会，文件名带时间戳
-- `fetch_sizes.py`
-  默认会覆盖输入文件，除非你传 `--out`
-
-## 备注
-
-- 当前目标站点是 Adidas US
-- 价格单位默认按接口返回，通常是 `USD`
-- 项目里 `result/adidas_prices_20260416_1408.json` 是现有样例数据
+分类明细使用英文 slug。当前列表是固定的；如果 Adidas 官网新增商品分类，需要把新 slug 加入 `fetch_all_skus_and_sizes.py` 的 `CATEGORIES`，否则不会自动抓取。

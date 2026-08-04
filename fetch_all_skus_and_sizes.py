@@ -1,23 +1,16 @@
-"""
-Adidas PLP 全量爬取脚本
-使用 /plp-app/_next/data/{buildId}/us/{category}.json 接口
-无需代理、无需 cookie，直接可用。
+"""Fetch Adidas product SKU and price data into MongoDB.
 
-用法:
-  python fetch_all_skus_and_sizes.py                              # 抓全部分类，含尺码库存
-  python fetch_all_skus_and_sizes.py --no-sizes                   # 不抓尺码（更快）
-  python fetch_all_skus_and_sizes.py --category men-shoes         # 只抓男鞋
-  python fetch_all_skus_and_sizes.py --build-id <id>              # 手动指定 buildId
-  python fetch_all_skus_and_sizes.py --prev result/prev.json      # 智能增量：复用稳定库存，只重拉低库存/新SKU
-  python fetch_all_skus_and_sizes.py --out result/prices.json     # 指定输出文件
+The default workflow is MongoDB-only; no local product JSON is written.
 """
-import argparse, json, time, sys, random
+import argparse, time, sys, random
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from curl_cffi import requests as cf_requests
 from adidas_monitor import check_sku
+from mongo_store import MongoStore
+from mongo_store import sync_products_to_mongo
 
 # ── 配置 ───────────────────────────────────────────────────────────────────────
 IMPERSONATE   = "chrome131"
@@ -39,14 +32,14 @@ AVAIL_URL  = "https://www.adidas.com/api/products/{sku}/availability?sitePath=us
 
 CATEGORIES = [
     # (slug,            extra_params,              label,   priority)
-    ("men-clothing",    "path=us",                 "男装",   0),
-    ("women-clothing",  "path=us",                 "女装",   0),
-    ("kids-clothing",   "path=us",                 "童装",   0),
-    ("men-shoes",       "path=us",                 "男鞋",   0),
-    ("women-shoes",     "path=us",                 "女鞋",   0),
-    ("kids-shoes",      "path=us",                 "童鞋",   0),
-    ("accessories",     "path=us",                 "配件",   0),
-    ("sale",            "path=us&taxonomy=sale",   "Sale",  1),
+    ("men-clothing",    "path=us",                 "men-clothing",   0),
+    ("women-clothing",  "path=us",                 "women-clothing",   0),
+    ("kids-clothing",   "path=us",                 "kids-clothing",   0),
+    ("men-shoes",       "path=us",                 "men-shoes",   0),
+    ("women-shoes",     "path=us",                 "women-shoes",   0),
+    ("kids-shoes",      "path=us",                 "kids-shoes",   0),
+    ("accessories",     "path=us",                 "accessories",   0),
+    ("sale",            "path=us&taxonomy=sale",   "sale",  1),
 ]
 
 # ── buildId 管理 ───────────────────────────────────────────────────────────────
@@ -66,16 +59,48 @@ def _validate_build_id(session: cf_requests.Session, bid: str, source: str) -> s
         print(f"错误: {e}")
     return None
 
+def auto_discover_build_id(session: cf_requests.Session) -> str | None:
+    """Open Adidas pages, discover the current Next.js buildId, and validate it."""
+    try:
+        from fetch_build_id import DEFAULT_URLS, discover_from_page
+    except Exception as exc:
+        print(f"自动获取 buildId 失败：缺少 Playwright 或依赖错误: {exc}", flush=True)
+        return None
+
+    for url in DEFAULT_URLS:
+        print(f"自动获取 buildId：打开 {url} ...", flush=True)
+        try:
+            bid = discover_from_page(url=url, timeout_ms=30000, headed=False)
+        except Exception as exc:
+            print(f"  页面探测失败: {exc}", flush=True)
+            continue
+        if bid:
+            print(f"  探测到 buildId: {bid}", flush=True)
+            validated = _validate_build_id(session, bid, "自动获取")
+            if validated:
+                return validated
+
+    return None
+
+
 def load_build_id(session: cf_requests.Session, manual_build_id: str | None) -> str | None:
     if manual_build_id:
-        return _validate_build_id(session, manual_build_id, "命令行")
+        validated = _validate_build_id(session, manual_build_id, "命令行")
+        if validated:
+            return validated
+        print("命令行 buildId 无效，开始自动获取新的 buildId ...", flush=True)
+        return auto_discover_build_id(session)
 
     cached = BUILD_ID_CACHE.read_text().strip() if BUILD_ID_CACHE.exists() else None
     if cached:
-        return _validate_build_id(session, cached, "缓存")
+        validated = _validate_build_id(session, cached, "缓存")
+        if validated:
+            return validated
+        print("缓存 buildId 无效，开始自动获取新的 buildId ...", flush=True)
+    else:
+        print("未提供 buildId，开始自动获取 ...", flush=True)
 
-    print("未提供 buildId，且缓存文件不存在。", flush=True)
-    return None
+    return auto_discover_build_id(session)
 
 # ── PLP 单页请求 ───────────────────────────────────────────────────────────────
 def fetch_page(session: cf_requests.Session, build_id: str,
@@ -293,69 +318,39 @@ def enrich_sizes(items: list[dict], prev_map: dict[str, list] | None = None) -> 
 
 # ── 主函数 ─────────────────────────────────────────────────────────────────────
 def main():
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    parser = argparse.ArgumentParser(description="Adidas PLP 全量价格+库存爬取")
-    parser.add_argument("--build-id",  help="Next.js buildId（默认自动获取）")
-    parser.add_argument("--category",  help="只抓单个分类 slug（如 sale / men-shoes）")
-    parser.add_argument("--out",       default=f"result/adidas_prices_{ts}.json",
-                        help="输出 JSON 文件（默认带时间戳）")
+    parser = argparse.ArgumentParser(description="Adidas PLP 全量价格抓取（MongoDB-only）")
+    parser.add_argument("--build-id", help="Next.js buildId（默认自动获取）")
+    parser.add_argument("--category", help="只抓单个分类 slug（如 sale / men-shoes）")
     parser.add_argument("--plp-workers", type=int, default=PLP_WORKERS,
                         help=f"PLP 翻页并发线程数（默认 {PLP_WORKERS}）")
-    parser.add_argument("--no-sizes",  action="store_true",
+    parser.add_argument("--no-sizes", action="store_true",
                         help="跳过尺码/库存抓取")
-    parser.add_argument("--prev",      help="上一轮输出的 JSON；提供后启用智能增量，"
-                        "稳定库存直接复用，低库存/新SKU 重新拉取")
     args = parser.parse_args()
     if args.plp_workers <= 0:
         parser.error("--plp-workers 必须大于 0")
 
     session = cf_requests.Session()
-
-    # buildId
     build_id = load_build_id(session, args.build_id)
     if not build_id:
-        print("当前 buildId 不可用。请先运行: python fetch_build_id.py", flush=True)
-        print("或手动传入: python fetch_all_skus_and_sizes.py --build-id <id>", flush=True)
+        print("无法获得有效 buildId，抓取终止。", flush=True)
         sys.exit(1)
     print(f"buildId: {build_id}")
 
-    # 加载上一轮数据（用于增量复用）
-    prev_map: dict[str, list] | None = None
-    if args.prev:
-        prev_path = Path(args.prev)
-        if prev_path.exists():
-            print(f"加载上一轮数据: {prev_path.name} ...", end=" ", flush=True)
-            with open(prev_path, encoding="utf-8") as f:
-                prev_data = json.load(f)
-            prev_map = {item["sku"]: item.get("sizes", []) for item in prev_data}
-            print(f"{len(prev_map)} 个 SKU")
-        else:
-            print(f"警告: --prev 文件不存在 ({args.prev})，将全量拉取")
-
-    # 选分类
     cats = CATEGORIES
     if args.category:
         cats = [c for c in CATEGORIES if c[0] == args.category]
         if not cats:
-            print(f"未知分类: {args.category}，可用: {[c[0] for c in CATEGORIES]}")
-            sys.exit(1)
+            parser.error(f"未知分类: {args.category}，可用: {[c[0] for c in CATEGORIES]}")
 
-    # 抓 PLP 列表
     all_results: list[dict] = []
     for slug, extra, label, _ in cats:
-        results = fetch_category(
-            session,
-            build_id,
-            slug,
-            extra,
-            label,
-            plp_workers=args.plp_workers,
-        )
-        all_results.extend(results)
+        all_results.extend(fetch_category(
+            session, build_id, slug, extra, label, plp_workers=args.plp_workers
+        ))
         time.sleep(SLEEP_SEC * 2)
 
-    # 去重：具体分类（priority=0）优先于 Sale（priority=1）
     priority_map = {c[2]: c[3] for c in CATEGORIES}
     seen: dict[str, dict] = {}
     for item in all_results:
@@ -367,29 +362,40 @@ def main():
     deduped = list(seen.values())
     print(f"\n去重后: {len(deduped)} 个唯一 SKU")
 
-    # 先保存不含尺码的快照（价格数据已完整，防止后续中断丢失）
-    out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(deduped, f, ensure_ascii=False, indent=2)
-    print(f"价格快照已保存: {out_path.name}（尺码待补充）")
+    batch_id = f"price_{ts}"
+    sync_products_to_mongo(
+        deduped,
+        source_file=batch_id,
+        include_sizes=False,
+        record_price_history=True,
+        required=True,
+    )
 
-    # 抓尺码库存，完成后覆盖保存
     if not args.no_sizes:
+        store = MongoStore.from_environment(required=True)
+        try:
+            previous = store.get_products([item["sku"] for item in deduped])
+        finally:
+            store.close()
+        prev_map = {item["sku"]: item.get("sizes", []) for item in previous}
         enrich_sizes(deduped, prev_map)
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(deduped, f, ensure_ascii=False, indent=2)
+        sync_products_to_mongo(
+            deduped,
+            source_file=batch_id,
+            include_sizes=True,
+            record_price_history=False,
+            required=True,
+        )
 
-    # 汇总
     cats_count = Counter(x["category"] for x in deduped)
-    with_sale  = [x for x in deduped if x["sale_price"] and x["orig_price"]
-                  and x["sale_price"] < x["orig_price"]]
-    sold_out   = [x for x in deduped if x["is_sold_out"]]
-    prices     = [x["orig_price"] for x in deduped if x["orig_price"]]
+    with_sale = [x for x in deduped if x["sale_price"] and x["orig_price"]
+                 and x["sale_price"] < x["orig_price"]]
+    sold_out = [x for x in deduped if x["is_sold_out"]]
+    prices = [x["orig_price"] for x in deduped if x["orig_price"]]
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"完成！共 {len(deduped)} 个唯一 SKU")
-    print(f"已保存至: {out_path.resolve()}")
+    print(f"批次号: {batch_id}")
     print("分类明细:")
     for cat, n in cats_count.most_common():
         print(f"  {cat}: {n}")
@@ -397,6 +403,7 @@ def main():
     print(f"售罄商品: {len(sold_out)}")
     if prices:
         print(f"价格区间: ${min(prices)} - ${max(prices)}")
+
 
 if __name__ == "__main__":
     main()

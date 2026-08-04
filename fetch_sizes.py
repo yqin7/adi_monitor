@@ -1,16 +1,5 @@
-"""
-独立尺码/库存抓取脚本
-读取已有的 result JSON，只补充/刷新 sizes 字段，不重新跑 PLP 列表。
-
-用法:
-  python fetch_sizes.py result/adidas_prices_20260416_1408.json
-  python fetch_sizes.py result/adidas_prices_20260416_1408.json --out result/with_sizes.json
-  python fetch_sizes.py result/adidas_prices_20260416_1408.json --force        # 强制重拉全部，忽略已有尺码
-  python fetch_sizes.py result/adidas_prices_20260416_1408.json --limit 200    # 只处理前200个，快速测试
-  python fetch_sizes.py result/adidas_prices_20260416_1408.json --workers 16   # 自定义并发数
-  python fetch_sizes.py result/adidas_prices_20260416_1408.json --min-sleep 0.6 --max-sleep 1.0
-"""
-import argparse, json, sys
+"""Fetch selected Adidas SKU sizes and inventory into MongoDB."""
+import argparse, sys
 from pathlib import Path
 
 # 直接从主抓取脚本复用核心逻辑，不重复实现
@@ -21,6 +10,7 @@ from fetch_all_skus_and_sizes import (
 )
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from mongo_store import MongoStore, sync_products_to_mongo
 
 
 def enrich_sizes(
@@ -90,13 +80,13 @@ def enrich_sizes(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="对已有 JSON 补充/刷新尺码库存")
-    parser.add_argument("input",           help="输入 JSON 文件（result/ 下的产品数据）")
-    parser.add_argument("--out",           help="输出文件（不指定则覆盖原文件）")
-    parser.add_argument("--force",         action="store_true",
+    parser = argparse.ArgumentParser(description="从 MongoDB 按 SKU 补充/刷新尺码库存")
+    parser.add_argument("--sku", nargs="+", required=True,
+                        help="从 MongoDB 读取并更新指定 SKU 的尺码")
+    parser.add_argument("--force", action="store_true",
                         help="强制重拉所有 SKU，忽略已有尺码和售罄状态")
     parser.add_argument("--limit", type=int, default=0,
-                        help="只处理前 N 个 SKU（用于快速测试，0=全部）")
+                        help="只处理前 N 个 SKU，0=全部")
     parser.add_argument("--workers", type=int, default=AVAIL_WORKERS,
                         help=f"并发线程数（默认 {AVAIL_WORKERS}）")
     parser.add_argument("--retries", type=int, default=AVAIL_RETRIES,
@@ -117,17 +107,14 @@ def main():
     if args.min_sleep > args.max_sleep:
         parser.error("--min-sleep 不能大于 --max-sleep")
 
-    in_path  = Path(args.input)
-    out_path = Path(args.out) if args.out else in_path
-
-    if not in_path.exists():
-        print(f"文件不存在: {in_path}")
-        sys.exit(1)
-
-    print(f"读取: {in_path.name} ...", end=" ", flush=True)
-    with open(in_path, encoding="utf-8") as f:
-        data = json.load(f)
-    print(f"{len(data)} 个 SKU")
+    store = MongoStore.from_environment(required=True)
+    try:
+        data = store.get_products(args.sku)
+    finally:
+        store.close()
+    if not data:
+        parser.error("MongoDB 中找不到指定 SKU")
+    print(f"从 MongoDB 读取 {len(data)} 个 SKU")
 
     items = data[:args.limit] if args.limit > 0 else data
     if args.limit > 0:
@@ -142,17 +129,15 @@ def main():
         max_sleep=args.max_sleep,
     )
 
-    # 如果只处理了部分（--limit），合并回全量数据再保存
-    if args.limit > 0 and not args.out:
-        sku_map = {item["sku"]: item for item in items}
-        for i, item in enumerate(data):
-            if item["sku"] in sku_map:
-                data[i] = sku_map[item["sku"]]
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    print(f"已保存: {out_path.resolve()}")
+    batch_id = "size_" + time.strftime("%Y%m%d_%H%M%S")
+    sync_products_to_mongo(
+        items,
+        source_file=batch_id,
+        include_sizes=True,
+        record_price_history=False,
+        required=True,
+    )
+    print(f"尺码库存已同步到 MongoDB，批次号: {batch_id}")
 
 
 if __name__ == "__main__":

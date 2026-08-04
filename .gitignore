@@ -1,1 +1,11 @@
 /result/
+
+# Python bytecode and local caches
+__pycache__/
+*.py[cod]
+
+# Local Adidas Next.js buildId cache
+.build_id_cache
+
+# Local secrets
+.env
