@@ -55,6 +55,19 @@ python fetch_all_skus_and_sizes.py --no-sizes
 ```powershell
 python fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
 ```
+## 失败页面重试
+
+翻页请求如果遇到 TLS、网络超时或其他临时错误，会先记录分类和页码，不会立即丢弃。所有分类抓取结束后，脚本会集中重试失败页面，并把恢复的数据合并到本次 MongoDB 批次。
+
+终端会显示：
+
+```text
+发现 N 个失败页面，所有分类完成后开始集中重试...
+重试成功: sale page 131
+集中重试完成：恢复 N 个，仍失败 0 个
+```
+
+如果集中重试后仍失败，终端会列出未恢复的分类和页码，便于单独排查。
 ## 日常价格抓取
 
 默认抓取全部固定分类的 SKU 和价格，直接写入 MongoDB：

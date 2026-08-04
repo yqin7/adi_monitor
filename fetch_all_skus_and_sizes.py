@@ -44,6 +44,7 @@ CATEGORIES = [
 
 # ── buildId 管理 ───────────────────────────────────────────────────────────────
 BUILD_ID_CACHE = Path(__file__).parent / ".build_id_cache"
+FAILED_PAGES: list[dict] = []
 
 def _validate_build_id(session: cf_requests.Session, bid: str, source: str) -> str | None:
     print(f"尝试 buildId ({source}): {bid} ...", end=" ", flush=True)
@@ -104,7 +105,9 @@ def load_build_id(session: cf_requests.Session, manual_build_id: str | None) -> 
 
 # ── PLP 单页请求 ───────────────────────────────────────────────────────────────
 def fetch_page(session: cf_requests.Session, build_id: str,
-               slug: str, extra: str, start: int) -> dict | None:
+               slug: str, extra: str, start: int,
+               category: str | None = None,
+               record_failure: bool = True) -> dict | None:
     url = BASE_URL.format(build_id=build_id, slug=slug) + f"?start={start}&{extra}"
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -119,6 +122,13 @@ def fetch_page(session: cf_requests.Session, build_id: str,
         except Exception as e:
             print(f"\n  ERROR retry {attempt}: {e}")
             time.sleep(SLEEP_SEC * 2)
+    if record_failure:
+        FAILED_PAGES.append({
+            "category": category or slug,
+            "slug": slug,
+            "extra": extra,
+            "start": start,
+        })
     return None
 
 # ── 解析 PLP 商品字段 ──────────────────────────────────────────────────────────
@@ -159,7 +169,7 @@ def fetch_category(
     plp_workers: int,
 ) -> list[dict]:
     print(f"\n[{label}] 开始抓取 ...", flush=True)
-    first = fetch_page(session, build_id, slug, extra, 0)
+    first = fetch_page(session, build_id, slug, extra, 0, category=label)
     if not first:
         print(f"[{label}] 第一页失败，跳过")
         return []
@@ -176,7 +186,7 @@ def fetch_category(
         done_pages = 1
         with ThreadPoolExecutor(max_workers=max(1, plp_workers)) as executor:
             futures = {
-                executor.submit(fetch_page, session, build_id, slug, extra, start): start
+                executor.submit(fetch_page, session, build_id, slug, extra, start, label): start
                 for start in starts
             }
             for future in as_completed(futures):
@@ -350,6 +360,35 @@ def main():
             session, build_id, slug, extra, label, plp_workers=args.plp_workers
         ))
         time.sleep(SLEEP_SEC * 2)
+
+    if FAILED_PAGES:
+        pending = FAILED_PAGES.copy()
+        FAILED_PAGES.clear()
+        print(f"\n发现 {len(pending)} 个失败页面，所有分类完成后开始集中重试...", flush=True)
+        recovered = 0
+        unresolved = []
+        for failure in pending:
+            data = fetch_page(
+                session,
+                build_id,
+                failure["slug"],
+                failure["extra"],
+                failure["start"],
+                category=failure["category"],
+                record_failure=False,
+            )
+            page_no = failure["start"] // PAGE_SIZE + 1
+            if data:
+                products = data.get("pageProps", {}).get("products", [])
+                all_results.extend(parse_product(p, failure["category"]) for p in products)
+                recovered += 1
+                print(f"  重试成功: {failure['category']} page {page_no}", flush=True)
+            else:
+                unresolved.append(failure)
+        print(f"集中重试完成：恢复 {recovered} 个，仍失败 {len(unresolved)} 个", flush=True)
+        for failure in unresolved:
+            page_no = failure["start"] // PAGE_SIZE + 1
+            print(f"  未恢复: {failure['category']} page {page_no}", flush=True)
 
     priority_map = {c[2]: c[3] for c in CATEGORIES}
     seen: dict[str, dict] = {}
