@@ -1,0 +1,5 @@
+curl_cffi>=0.5.9
+pymongo>=4.5.0
+python-dotenv>=1.0.0
+playwright>=1.40.0
+pyyaml>=6.0

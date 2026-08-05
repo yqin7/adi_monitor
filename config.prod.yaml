@@ -1,0 +1,25 @@
+mongodb:
+  uri: "${MONGODB_URI}"       # 从环境变量读取
+  database: "adidas_monitor"
+  collection: "products"
+  history_collection: "price_history"
+
+scraper:
+  # PLP (Product List Page) 翻页配置
+  plp_workers: 12             # 生产环境提高并发
+  plp_sleep: 1.0              # 降低间隔
+  plp_max_retries: 4          # 增加重试次数
+
+  # 库存 (Availability) 查询配置
+  avail_workers: 24           # 提高库存查询并发
+  avail_retries: 5            # 增加重试容错
+  avail_min_sleep: 0.4        # 减少等待时间
+  avail_max_sleep: 0.8
+  avail_low_stock_qty: 5
+
+app:
+  impersonate: "chrome131"
+  page_size: 48
+  write_batch_size: 5000
+  request_timeout: 20         # 请求超时（秒）
+  log_level: "INFO"           # 日志级别
