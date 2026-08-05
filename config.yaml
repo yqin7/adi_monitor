@@ -23,3 +23,16 @@ app:
   write_batch_size: 5000      # MongoDB 批写入大小
   request_timeout: 20         # 请求超时（秒）
   log_level: "INFO"           # 日志级别
+
+# Slack 通知配置
+slack:
+  enabled: true
+  webhook_url: "${SLACK_WEBHOOK_URL}"     # 从环境变量读取
+  mention_user_id: "${SLACK_USER_ID}"     # 可选，@通知用户
+
+# 扫描和通知配置
+notification:
+  enabled: true
+  scan_interval_minutes: 30          # 扫描间隔
+  duplicate_notification_hours: 2    # 相同货2小时内不重复通知
+  concurrent_workers: 24             # 并发扫描线程数

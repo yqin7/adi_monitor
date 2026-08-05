@@ -17,7 +17,7 @@ def _resolve_env_vars(value: Any) -> Any:
         # 替换 ${VAR_NAME} 格式
         def replace_env(match):
             var_name = match.group(1)
-            return os.getenv(var_name, match.group(0))
+            return os.getenv(var_name, "")
         return re.sub(r'\$\{([^}]+)\}', replace_env, value)
     elif isinstance(value, dict):
         return {k: _resolve_env_vars(v) for k, v in value.items()}
@@ -32,6 +32,12 @@ def load_config() -> Dict[str, Any]:
     Returns:
         配置字典
     """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).parent / ".env")
+    except ImportError:
+        pass
+
     config_file = Path(__file__).parent / "config.yaml"
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")

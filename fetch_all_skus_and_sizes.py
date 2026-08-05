@@ -342,51 +342,75 @@ def enrich_sizes(items: list[dict], prev_map: dict[str, list] | None = None) -> 
     elapsed = time.monotonic() - t_start
     print(f"\n  完毕: {total} 个  耗时 {elapsed:.0f}s  fail={failed}  复用={reused}")
 
-# ── 主函数 ─────────────────────────────────────────────────────────────────────
-def main():
+# ── 全量扫描核心逻辑（供 CLI 和 API 服务共同调用）──────────────────────────────
+def run_full_scan(
+    category: str | None = None,
+    plp_workers: int = PLP_WORKERS,
+    include_sizes: bool = True,
+    build_id: str | None = None,
+    progress_cb=None,
+) -> dict:
+    """执行一次全量 PLP 扫描（发现所有 SKU + 价格），可选补充尺码库存。
+
+    Args:
+        category: 只抓单个分类 slug（如 sale / men-shoes），None = 全部分类
+        plp_workers: PLP 翻页并发线程数
+        include_sizes: 是否在价格抓取后继续补充尺码库存（AVAIL 请求）
+        build_id: 手动指定 Next.js buildId，None = 自动获取/使用缓存
+        progress_cb: 可选回调 progress_cb(stage: str, message: str)，用于上报进度
+
+    Returns:
+        {
+            "batch_id": str,
+            "total_skus": int,
+            "categories": {分类: 数量},
+            "with_sale": int,
+            "sold_out": int,
+            "price_range": [min, max] | None,
+            "include_sizes": bool,
+        }
+    """
+    def _report(stage: str, message: str):
+        if progress_cb:
+            try:
+                progress_cb(stage, message)
+            except Exception:
+                pass
+        print(message, flush=True)
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    parser = argparse.ArgumentParser(description="Adidas PLP 全量价格抓取（MongoDB-only）")
-    parser.add_argument("--build-id", help="Next.js buildId（默认自动获取）")
-    parser.add_argument("--category", help="只抓单个分类 slug（如 sale / men-shoes）")
-    parser.add_argument("--plp-workers", type=int, default=PLP_WORKERS,
-                        help=f"PLP 翻页并发线程数（默认 {PLP_WORKERS}）")
-    parser.add_argument("--no-sizes", action="store_true",
-                        help="跳过尺码/库存抓取")
-    args = parser.parse_args()
-    if args.plp_workers <= 0:
-        parser.error("--plp-workers 必须大于 0")
-
     session = cf_requests.Session()
-    build_id = load_build_id(session, args.build_id)
-    if not build_id:
-        print("无法获得有效 buildId，抓取终止。", flush=True)
-        sys.exit(1)
-    print(f"buildId: {build_id}")
+    _report("build_id", "获取 buildId ...")
+    resolved_build_id = load_build_id(session, build_id)
+    if not resolved_build_id:
+        raise RuntimeError("无法获得有效 buildId，全量扫描终止")
+    _report("build_id", f"buildId: {resolved_build_id}")
 
     cats = CATEGORIES
-    if args.category:
-        cats = [c for c in CATEGORIES if c[0] == args.category]
+    if category:
+        cats = [c for c in CATEGORIES if c[0] == category]
         if not cats:
-            parser.error(f"未知分类: {args.category}，可用: {[c[0] for c in CATEGORIES]}")
+            raise ValueError(f"未知分类: {category}，可用: {[c[0] for c in CATEGORIES]}")
 
     all_results: list[dict] = []
     for slug, extra, label, _ in cats:
+        _report("plp", f"开始抓取分类: {label}")
         all_results.extend(fetch_category(
-            session, build_id, slug, extra, label, plp_workers=args.plp_workers
+            session, resolved_build_id, slug, extra, label, plp_workers=plp_workers
         ))
         time.sleep(SLEEP_SEC * 2)
 
     if FAILED_PAGES:
         pending = FAILED_PAGES.copy()
         FAILED_PAGES.clear()
-        print(f"\n发现 {len(pending)} 个失败页面，所有分类完成后开始集中重试...", flush=True)
+        _report("plp_retry", f"发现 {len(pending)} 个失败页面，开始集中重试...")
         recovered = 0
         unresolved = []
         for failure in pending:
             data = fetch_page(
                 session,
-                build_id,
+                resolved_build_id,
                 failure["slug"],
                 failure["extra"],
                 failure["start"],
@@ -398,13 +422,10 @@ def main():
                 products = data.get("pageProps", {}).get("products", [])
                 all_results.extend(parse_product(p, failure["category"]) for p in products)
                 recovered += 1
-                print(f"  重试成功: {failure['category']} page {page_no}", flush=True)
+                _report("plp_retry", f"  重试成功: {failure['category']} page {page_no}")
             else:
                 unresolved.append(failure)
-        print(f"集中重试完成：恢复 {recovered} 个，仍失败 {len(unresolved)} 个", flush=True)
-        for failure in unresolved:
-            page_no = failure["start"] // PAGE_SIZE + 1
-            print(f"  未恢复: {failure['category']} page {page_no}", flush=True)
+        _report("plp_retry", f"集中重试完成：恢复 {recovered} 个，仍失败 {len(unresolved)} 个")
 
     priority_map = {c[2]: c[3] for c in CATEGORIES}
     seen: dict[str, dict] = {}
@@ -415,9 +436,10 @@ def main():
         elif priority_map.get(item["category"], 0) < priority_map.get(seen[sku]["category"], 0):
             seen[sku] = item
     deduped = list(seen.values())
-    print(f"\n去重后: {len(deduped)} 个唯一 SKU")
+    _report("dedupe", f"去重后: {len(deduped)} 个唯一 SKU")
 
     batch_id = f"price_{ts}"
+    _report("mongo_price", "写入价格数据到 MongoDB ...")
     sync_products_to_mongo(
         deduped,
         source_file=batch_id,
@@ -426,7 +448,8 @@ def main():
         required=True,
     )
 
-    if not args.no_sizes:
+    if include_sizes:
+        _report("sizes", "补充尺码库存 ...")
         store = MongoStore.from_environment(required=True)
         try:
             previous = store.get_products([item["sku"] for item in deduped])
@@ -434,6 +457,7 @@ def main():
             store.close()
         prev_map = {item["sku"]: item.get("sizes", []) for item in previous}
         enrich_sizes(deduped, prev_map)
+        _report("mongo_sizes", "写入尺码库存数据到 MongoDB ...")
         sync_products_to_mongo(
             deduped,
             source_file=batch_id,
@@ -448,16 +472,53 @@ def main():
     sold_out = [x for x in deduped if x["is_sold_out"]]
     prices = [x["orig_price"] for x in deduped if x["orig_price"]]
 
+    summary = {
+        "batch_id": batch_id,
+        "total_skus": len(deduped),
+        "categories": dict(cats_count),
+        "with_sale": len(with_sale),
+        "sold_out": len(sold_out),
+        "price_range": [min(prices), max(prices)] if prices else None,
+        "include_sizes": include_sizes,
+    }
+    _report("done", f"完成！共 {len(deduped)} 个唯一 SKU，批次号: {batch_id}")
+    return summary
+
+
+# ── 主函数（CLI 入口）───────────────────────────────────────────────────────────
+def main():
+    parser = argparse.ArgumentParser(description="Adidas PLP 全量价格抓取（MongoDB-only）")
+    parser.add_argument("--build-id", help="Next.js buildId（默认自动获取）")
+    parser.add_argument("--category", help="只抓单个分类 slug（如 sale / men-shoes）")
+    parser.add_argument("--plp-workers", type=int, default=PLP_WORKERS,
+                        help=f"PLP 翻页并发线程数（默认 {PLP_WORKERS}）")
+    parser.add_argument("--no-sizes", action="store_true",
+                        help="跳过尺码/库存抓取")
+    args = parser.parse_args()
+    if args.plp_workers <= 0:
+        parser.error("--plp-workers 必须大于 0")
+
+    try:
+        summary = run_full_scan(
+            category=args.category,
+            plp_workers=args.plp_workers,
+            include_sizes=not args.no_sizes,
+            build_id=args.build_id,
+        )
+    except (RuntimeError, ValueError) as e:
+        print(str(e), flush=True)
+        sys.exit(1)
+
     print(f"\n{'=' * 60}")
-    print(f"完成！共 {len(deduped)} 个唯一 SKU")
-    print(f"批次号: {batch_id}")
+    print(f"完成！共 {summary['total_skus']} 个唯一 SKU")
+    print(f"批次号: {summary['batch_id']}")
     print("分类明细:")
-    for cat, n in cats_count.most_common():
+    for cat, n in sorted(summary["categories"].items(), key=lambda x: -x[1]):
         print(f"  {cat}: {n}")
-    print(f"打折商品: {len(with_sale)}")
-    print(f"售罄商品: {len(sold_out)}")
-    if prices:
-        print(f"价格区间: ${min(prices)} - ${max(prices)}")
+    print(f"打折商品: {summary['with_sale']}")
+    print(f"售罄商品: {summary['sold_out']}")
+    if summary["price_range"]:
+        print(f"价格区间: ${summary['price_range'][0]} - ${summary['price_range'][1]}")
 
 
 if __name__ == "__main__":
