@@ -2,37 +2,26 @@
 
 ## 配置管理
 
-### 本地开发 (local)
-
-用于本地测试和开发：
+所有环境使用统一的 `config.yaml` 文件。敏感信息（MongoDB URI）通过环境变量注入。
 
 ```yaml
-# config.local.yaml
-mongodb:
-  uri: "mongodb+srv://username:password@cluster.mongodb.net/..."
-  database: "adidas_monitor"
-```
-
-运行方式：
-```bash
-$env:APP_ENV="local"
-python fetch_all_skus_and_sizes.py --no-sizes
-```
-
-### 生产环境 (prod)
-
-用于云服务器部署，配置中敏感信息通过环境变量注入：
-
-```yaml
-# config.prod.yaml
+# config.yaml
 mongodb:
   uri: "${MONGODB_URI}"  # 从环境变量读取
 ```
 
-运行方式：
+### 本地运行
+
 ```bash
-$env:APP_ENV="prod"
-$env:MONGODB_URI="mongodb+srv://..."
+$env:MONGODB_URI="mongodb+srv://username:password@cluster.mongodb.net/..."
+python fetch_all_skus_and_sizes.py --no-sizes
+```
+
+### 云服务器部署
+
+设置环境变量后运行相同命令：
+```bash
+export MONGODB_URI="mongodb+srv://..."
 python fetch_all_skus_and_sizes.py --no-sizes
 ```
 

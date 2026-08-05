@@ -13,16 +13,43 @@
 安装依赖：
 
 ```powershell
-pip install curl_cffi pymongo python-dotenv playwright
+pip install -r requirements.txt
 playwright install chromium
 ```
 
-在项目根目录创建 `.env`：
+## 配置管理
 
-```env
-MONGODB_URI=mongodb+srv://用户名:密码@集群地址/?retryWrites=true&w=majority
-MONGODB_DATABASE=adidas_monitor
-MONGODB_COLLECTION=products
+项目配置通过 `config.yaml` 统一管理。
+
+### 配置文件说明
+
+```yaml
+mongodb:
+  uri: "${MONGODB_URI}"           # MongoDB 连接字符串（从环境变量读取）
+  database: "adidas_monitor"      # 数据库名
+  collection: "products"          # 商品集合
+  history_collection: "price_history"  # 价格历史集合
+
+scraper:
+  plp_workers: 12                 # 翻页并发线程数
+  plp_sleep: 1.0                  # 翻页间隔（秒）
+  avail_workers: 24               # 库存查询并发线程数
+  avail_retries: 5                # 库存查询重试次数
+  avail_low_stock_qty: 5          # 低库存阈值
+
+app:
+  write_batch_size: 5000          # MongoDB 批写入大小
+  request_timeout: 20             # 请求超时（秒）
+```
+
+### 运行方式
+
+设置 MongoDB 连接环境变量后运行：
+
+```powershell
+$env:MONGODB_URI="mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority"
+$env:PYTHONIOENCODING="utf-8"
+python fetch_all_skus_and_sizes.py --no-sizes
 ```
 
 `.env`、`.build_id_cache`、`__pycache__` 和 Python 字节码已加入 `.gitignore`。

@@ -26,20 +26,13 @@ def _resolve_env_vars(value: Any) -> Any:
     return value
 
 
-def load_config(env: str = "local") -> Dict[str, Any]:
-    """加载配置文件
-
-    Args:
-        env: 环境名 ("local" 或 "prod")
+def load_config() -> Dict[str, Any]:
+    """加载配置文件 config.yaml
 
     Returns:
         配置字典
     """
-    env = os.getenv("APP_ENV", env).lower()
-    if env not in ("local", "prod"):
-        raise ValueError(f"Invalid environment: {env}. Must be 'local' or 'prod'")
-
-    config_file = Path(__file__).parent / f"config.{env}.yaml"
+    config_file = Path(__file__).parent / "config.yaml"
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")
 
@@ -82,8 +75,8 @@ if __name__ == "__main__":
     import json
 
     try:
-        cfg = load_config("local")
-        print("✓ Local config loaded successfully")
+        cfg = load_config()
+        print("Config loaded successfully")
         print(json.dumps(cfg, indent=2, ensure_ascii=False))
     except Exception as e:
-        print(f"✗ Error loading config: {e}")
+        print(f"Error loading config: {e}")
