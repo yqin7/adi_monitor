@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  scanner:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # MongoDB 连接字符串
+      - MONGODB_URI=mongodb+srv://user:password@cluster.mongodb.net/?retryWrites=true&w=majority
+
+      # Slack 通知配置
+      - SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+      - SLACK_USER_ID=U123456789  # 可选，用于 @mention
+
+      # Python 日志级别
+      - PYTHONUNBUFFERED=1
+
+    restart: unless-stopped
+
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
