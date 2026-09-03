@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 """得物开放平台 OAuth2 授权码流程
 
-注意：按官方《应用说明》，「调回地址」与 code 换 access_token 的流程
-是**针对第三方软件服务商（ISV）**的 —— ISV 需要商家授权后才能代其调用。
-自研企业商家用自己的 app_key/app_secret 直接调用即可，通常不需要走本模块。
-先按不带 access_token 的方式试，报未授权再回来接这套流程。
+这套流程针对第三方软件服务商（ISV）—— ISV 需要商家授权后才能代其调用。
+自研企业商家在入驻时绑定授权，不需要 token。
 
-流程（授权页参数与回调格式已从开放平台前端源码确认）：
+流程：
 
-1. 把商家引导到授权页：
+1. 把商家引导到授权页（参数取自开放平台前端源码）：
        https://open.dewu.com/#/authorize?appKey=<app_key>&redirect_uri=<encoded>
            &state=<state>&scope=all&response_type=code
 2. 商家同意后浏览器跳回 redirect_uri：
        <redirect_uri>?code=<urlencoded_code>&state=<urlencoded_state>
-3. 用 code 到网关换 access_token（签名同普通接口）。
+3. 用 code 换 access_token。
 4. access_token 过期前用 refresh_token 续期。
 
-第 3、4 步的网关路径与出入参字段名以官方文档为准，可用环境变量覆盖：
-    DEWU_TOKEN_PATH          默认 dop/api/v1/oauth/token
-    DEWU_REFRESH_TOKEN_PATH  默认 dop/api/v1/oauth/refresh_token
+第 3、4 步的接口取自官方 Java SDK（com.dewu.sdk.oauth.Client）：
+
+    POST https://openapi.dewu.com/api/v1/h5/passport/v1/oauth2/token
+         {client_id, client_secret, authorization_code}
+    POST https://openapi.dewu.com/api/v1/h5/passport/v1/oauth2/refresh_token
+         {client_id, client_secret, refresh_token, grant_type}
+
+注意这两个接口**不走网关签名**：client_secret 直接放在 body 里，
+没有 app_key/timestamp/sign，与其他业务接口完全不同。
+返回 open_id、access_token、refresh_token、access_token_expires_in、
+refresh_token_expires_in、scope。
 """
 
 import json
@@ -28,6 +34,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import quote
 
+import requests
+
 from dewu_client import DewuClient
 
 AUTHORIZE_BASE = "https://open.dewu.com/#/authorize"
@@ -35,8 +43,8 @@ AUTHORIZE_BASE = "https://open.dewu.com/#/authorize"
 # 同样走 open.dewu.com，用沙箱 appKey 区分环境。
 SANDBOX_AUTHORIZE_BASE = AUTHORIZE_BASE
 
-TOKEN_PATH = os.getenv("DEWU_TOKEN_PATH", "dop/api/v1/oauth/token")
-REFRESH_TOKEN_PATH = os.getenv("DEWU_REFRESH_TOKEN_PATH", "dop/api/v1/oauth/refresh_token")
+TOKEN_PATH = "api/v1/h5/passport/v1/oauth2/token"
+REFRESH_TOKEN_PATH = "api/v1/h5/passport/v1/oauth2/refresh_token"
 
 # access_token 剩余有效期低于该秒数时提前刷新
 REFRESH_MARGIN_SECONDS = 300
@@ -98,22 +106,35 @@ class DewuOAuth:
             sandbox=self.client.gateway.endswith("-sandbox.dewu.com"),
         )
 
+    def _post(self, path: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        """这两个接口不走网关签名，client_secret 直接放在 body 里"""
+        url = f"{self.client.gateway}/{path}"
+        payload = dict(body)
+        payload["client_id"] = self.client.app_key
+        payload["client_secret"] = self.client.app_secret
+        resp = requests.post(
+            url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=self.client.timeout,
+        )
+        try:
+            return resp.json()
+        except ValueError:
+            return {"http_status": resp.status_code, "text": resp.text[:2000]}
+
     def exchange_code(self, code: str) -> Dict[str, Any]:
         """用回调拿到的 code 换 access_token，并写入本地缓存"""
-        resp = self.client.call(TOKEN_PATH, {
-            "code": code,
-            "grant_type": "authorization_code",
-            "redirect_uri": self.redirect_uri,
-        })
-        return self._store_token(resp)
+        return self._store_token(
+            self._post(TOKEN_PATH, {"authorization_code": code})
+        )
 
     def refresh(self, refresh_token: str) -> Dict[str, Any]:
         """用 refresh_token 续期"""
-        resp = self.client.call(REFRESH_TOKEN_PATH, {
+        return self._store_token(self._post(REFRESH_TOKEN_PATH, {
             "refresh_token": refresh_token,
             "grant_type": "refresh_token",
-        })
-        return self._store_token(resp)
+        }))
 
     def get_access_token(self) -> Optional[str]:
         """取一个可用的 access_token，快过期时自动刷新
@@ -135,19 +156,30 @@ class DewuOAuth:
         return token.get("access_token")
 
     def _store_token(self, resp: Dict[str, Any]) -> Dict[str, Any]:
-        """从网关响应中取出 token 字段并落盘"""
-        data = resp.get("data") if isinstance(resp.get("data"), dict) else resp
-        access_token = data.get("access_token") or data.get("accessToken")
-        if not access_token:
-            raise RuntimeError(f"换取 access_token 失败: {json.dumps(resp, ensure_ascii=False)}")
+        """从响应中取出 token 字段并落盘
 
-        expires_in = int(data.get("expires_in") or data.get("expiresIn") or 0)
+        SDK 里 AuthTokenRes 的字段：open_id、access_token、refresh_token、
+        access_token_expires_in、refresh_token_expires_in、scope。
+        """
+        data = resp.get("data") if isinstance(resp.get("data"), dict) else resp
+        access_token = data.get("access_token")
+        if not access_token:
+            raise RuntimeError(
+                f"换取 access_token 失败: {json.dumps(resp, ensure_ascii=False)}"
+            )
+
+        expires_in = int(data.get("access_token_expires_in") or 0)
+        refresh_expires_in = int(data.get("refresh_token_expires_in") or 0)
+        now = time.time()
         token = {
+            "open_id": data.get("open_id", ""),
             "access_token": access_token,
-            "refresh_token": data.get("refresh_token") or data.get("refreshToken", ""),
+            "refresh_token": data.get("refresh_token", ""),
+            "scope": data.get("scope"),
             "expires_in": expires_in,
-            "expires_at": time.time() + expires_in if expires_in else 0,
-            "obtained_at": time.time(),
+            "expires_at": now + expires_in if expires_in else 0,
+            "refresh_expires_at": now + refresh_expires_in if refresh_expires_in else 0,
+            "obtained_at": now,
         }
         self.store.save(token)
         return token
