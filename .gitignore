@@ -14,3 +14,6 @@ __pycache__/
 
 # IDE project files
 .idea/
+
+# 得物 access_token 缓存
+.dewu_token.json

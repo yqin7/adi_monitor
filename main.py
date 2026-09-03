@@ -3,8 +3,8 @@ import os
 import uuid
 import logging
 import threading
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -24,6 +24,9 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# 得物 OAuth 待回调的 state 集合（防 CSRF）
+_DEWU_OAUTH_STATES: set = set()
 
 # ===== FastAPI 应用 =====
 app = FastAPI(
@@ -741,6 +744,73 @@ async def root():
                 "slack_update": "POST /config/slack",
             },
         },
+    }
+
+
+# ===== 得物 OAuth 授权 =====
+
+def _dewu_oauth(sandbox: bool = False):
+    """按环境构造 OAuth 助手"""
+    from dewu_client import DewuClient
+    from dewu_oauth import DewuOAuth
+
+    prefix = "DEWU_SANDBOX_" if sandbox else "DEWU_"
+    client = DewuClient(
+        os.getenv(f"{prefix}APP_KEY", ""),
+        os.getenv(f"{prefix}APP_SECRET", ""),
+        sandbox=sandbox,
+    )
+    return DewuOAuth(client)
+
+
+@app.get("/dewu/oauth/authorize", tags=["Dewu OAuth"], summary="跳转到得物授权页")
+def dewu_oauth_authorize(sandbox: bool = Query(False, description="使用沙箱环境")):
+    """生成随机 state 并 302 到得物授权页"""
+    state = uuid.uuid4().hex
+    _DEWU_OAUTH_STATES.add(state)
+    try:
+        url = _dewu_oauth(sandbox).authorize_url(state=state)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"得物凭证未配置: {e}")
+    return RedirectResponse(url)
+
+
+@app.get("/dewu/oauth/callback", tags=["Dewu OAuth"], summary="得物授权回调")
+def dewu_oauth_callback(
+    code: str = Query(..., description="授权码"),
+    state: str = Query("", description="发起授权时下发的 state"),
+    sandbox: bool = Query(False, description="使用沙箱环境"),
+):
+    """接收授权码并换取 access_token"""
+    if state and state not in _DEWU_OAUTH_STATES:
+        raise HTTPException(status_code=400, detail="state 校验失败，疑似 CSRF")
+    _DEWU_OAUTH_STATES.discard(state)
+
+    try:
+        token = _dewu_oauth(sandbox).exchange_code(code)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    logger.info("得物授权成功，access_token 已缓存")
+    return {
+        "success": True,
+        "expires_in": token.get("expires_in"),
+        "has_refresh_token": bool(token.get("refresh_token")),
+    }
+
+
+@app.get("/dewu/oauth/status", tags=["Dewu OAuth"], summary="查看授权状态")
+def dewu_oauth_status(sandbox: bool = Query(False, description="使用沙箱环境")):
+    """不回显 token 本身，只报有效性"""
+    token = _dewu_oauth(sandbox).store.load()
+    if not token.get("access_token"):
+        return {"authorized": False}
+    expires_at = token.get("expires_at", 0)
+    return {
+        "authorized": True,
+        "expires_at": datetime.fromtimestamp(expires_at).isoformat() if expires_at else None,
+        "expired": bool(expires_at and expires_at <= datetime.now().timestamp()),
+        "has_refresh_token": bool(token.get("refresh_token")),
     }
 
 
