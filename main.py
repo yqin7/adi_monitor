@@ -814,17 +814,39 @@ def dewu_oauth_status(sandbox: bool = Query(False, description="使用沙箱环�
     }
 
 
-@app.get("/dewu/price/{sku_id}", tags=["Dewu"], summary="查询得物 SKU 最低价")
-def dewu_lowest_price(
-    sku_id: int,
+@app.get("/dewu/product/{article_number}", tags=["Dewu"],
+         summary="按货号查得物商品")
+def dewu_product_by_article(
+    article_number: str,
     sandbox: bool = Query(False, description="使用沙箱环境"),
-    auth: bool = Query(True, description="附带已授权的 access_token"),
 ):
-    """查询单个 SKU 各出价类型的最低价（单位已转成元）"""
-    from dewu_price import _build_query
+    """用 adidas 货号查得物 spu、尺码 sku 列表与官方指导价"""
+    from dewu_price import build_query
 
     try:
-        return _build_query(sandbox, auth).get_lowest_price(sku_id)
+        products = build_query(sandbox).lookup_article_numbers([article_number])
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"得物凭证未配置: {e}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not products:
+        raise HTTPException(status_code=404, detail=f"得物没有货号 {article_number}")
+    return products[0]
+
+
+@app.get("/dewu/income/{sku_id}", tags=["Dewu"], summary="按出价算到手价")
+def dewu_expect_income(
+    sku_id: int,
+    bidding_price_fen: int = Query(..., description="出价，单位分"),
+    bidding_type: int = Query(0, description="出价类型，0 为现货"),
+    sandbox: bool = Query(False, description="使用沙箱环境"),
+):
+    """给定出价，返回各项手续费与到手价"""
+    from dewu_price import build_query
+
+    try:
+        return build_query(sandbox).expect_income(sku_id, bidding_price_fen, bidding_type)
     except ValueError as e:
         raise HTTPException(status_code=500, detail=f"得物凭证未配置: {e}")
     except RuntimeError as e:
