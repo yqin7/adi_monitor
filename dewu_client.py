@@ -6,6 +6,14 @@
 参数按 key 字典序排序，值为空的参数与 sign 自身不参与签名。
 （算法已由沙箱网关回显的 signStr 实测校验）
 
+网关错误码（实测）：
+    404      路径不存在
+    403      签名验证失败（沙箱会回显 signStr 便于比对）
+    405      请求方式不对，换 GET/POST
+    5025     当前 IP 不在应用白名单
+    5013     无权调用接口 —— 该接口所属权限包未「已拥有」
+    5044     token 信息无效，未获取到用户授权信息 —— 需要 access_token
+
 用法:
     export DEWU_APP_KEY=xxx DEWU_APP_SECRET=yyy
     python dewu_client.py --path dop/api/v1/spu/price --params '{"spuId": 123}'
