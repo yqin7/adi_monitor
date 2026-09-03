@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """得物开放平台 (open.dewu.com) 调用客户端
 
-签名规则（按开放平台通用文档）：
-    sign = MD5(app_secret + 拼接串 + app_secret).upper()
-其中拼接串 = 所有业务参数按 key 字典序排序后的 key+value 顺序拼接
-（值为空 / None 的参数不参与签名，sign 自身不参与）。
+签名规则（实测确认）：
+    sign = MD5("k1=v1&k2=v2&..." + app_secret).upper()
+参数按 key 字典序排序，值为空的参数与 sign 自身不参与签名。
+（算法已由沙箱网关回显的 signStr 实测校验）
 
 用法:
     export DEWU_APP_KEY=xxx DEWU_APP_SECRET=yyy
@@ -27,7 +27,12 @@ SANDBOX_GATEWAY = "https://openapi-sandbox.dewu.com"
 
 
 def make_sign(params: Dict[str, Any], app_secret: str) -> str:
-    """生成得物开放平台签名"""
+    """生成得物开放平台签名
+
+    签名串 = 参数按 key 字典序排序后拼成 "k1=v1&k2=v2&..."，再直接拼接 app_secret，
+    取 MD5 后转大写。sign 自身与空值参数不参与签名。
+    （算法由网关返回的 signStr 回显实测确认）
+    """
     parts = []
     for key in sorted(params):
         if key == "sign":
@@ -37,8 +42,8 @@ def make_sign(params: Dict[str, Any], app_secret: str) -> str:
             continue
         if isinstance(value, (dict, list)):
             value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-        parts.append(f"{key}{value}")
-    raw = app_secret + "".join(parts) + app_secret
+        parts.append(f"{key}={value}")
+    raw = "&".join(parts) + app_secret
     return hashlib.md5(raw.encode("utf-8")).hexdigest().upper()
 
 
