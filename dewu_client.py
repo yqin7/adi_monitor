@@ -68,13 +68,14 @@ class DewuClient:
         self.timeout = timeout
 
     def call(self, path: str, biz_params: Dict[str, Any] = None,
-             access_token: str = None) -> Dict[str, Any]:
+             access_token: str = None, method: str = "POST") -> Dict[str, Any]:
         """调用一个开放平台接口
 
         Args:
-            path: 接口路径，如 "dop/api/v1/spu/price"（以文档为准）
+            path: 接口路径，如 "dop/api/v1/bidding/lowest_price"
             biz_params: 业务参数
             access_token: 商家授权 token，需要授权的接口必填（参与签名）
+            method: 部分接口只接受 GET，方式不对网关会回 405
         """
         payload = dict(biz_params or {})
         payload["app_key"] = self.app_key
@@ -84,12 +85,15 @@ class DewuClient:
         payload["sign"] = make_sign(payload, self.app_secret)
 
         url = f"{self.gateway}/{path.lstrip('/')}"
-        resp = requests.post(
-            url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=self.timeout,
-        )
+        if method.upper() == "GET":
+            resp = requests.get(url, params=payload, timeout=self.timeout)
+        else:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=self.timeout,
+            )
         try:
             return resp.json()
         except ValueError:
@@ -101,6 +105,8 @@ def main():
     parser.add_argument("--path", required=True, help="接口路径，以官方文档为准")
     parser.add_argument("--params", default="{}", help="业务参数 JSON 字符串")
     parser.add_argument("--sandbox", action="store_true", help="使用沙箱环境")
+    parser.add_argument("--method", default="POST", choices=["GET", "POST"],
+                        help="请求方式，方式不对网关会回 405")
     parser.add_argument("--auth", action="store_true",
                         help="附带本地缓存的 access_token（需授权的接口）")
     args = parser.parse_args()
@@ -124,7 +130,8 @@ def main():
                   file=sys.stderr)
             sys.exit(1)
 
-    result = client.call(args.path, json.loads(args.params), access_token=token)
+    result = client.call(args.path, json.loads(args.params), access_token=token,
+                         method=args.method)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 

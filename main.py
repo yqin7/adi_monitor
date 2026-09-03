@@ -814,6 +814,23 @@ def dewu_oauth_status(sandbox: bool = Query(False, description="使用沙箱环�
     }
 
 
+@app.get("/dewu/price/{sku_id}", tags=["Dewu"], summary="查询得物 SKU 最低价")
+def dewu_lowest_price(
+    sku_id: int,
+    sandbox: bool = Query(False, description="使用沙箱环境"),
+    auth: bool = Query(True, description="附带已授权的 access_token"),
+):
+    """查询单个 SKU 各出价类型的最低价（单位已转成元）"""
+    from dewu_price import _build_query
+
+    try:
+        return _build_query(sandbox, auth).get_lowest_price(sku_id)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=f"得物凭证未配置: {e}")
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
 
