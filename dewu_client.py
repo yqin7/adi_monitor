@@ -58,7 +58,10 @@ def make_sign(params: Dict[str, Any], app_secret: str) -> str:
         value = params[key]
         if value is None or value == "":
             continue
-        if isinstance(value, (dict, list)):
+        if isinstance(value, (list, tuple)):
+            # 数组参与签名时是逗号连接，不是 JSON（网关 signStr 回显确认）
+            value = ",".join(str(v) for v in value)
+        elif isinstance(value, dict):
             value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         parts.append(f"{key}={_java_url_encode(str(value))}")
     raw = "&".join(parts) + app_secret
