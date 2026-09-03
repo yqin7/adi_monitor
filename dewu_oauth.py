@@ -26,7 +26,9 @@ from urllib.parse import quote
 from dewu_client import DewuClient
 
 AUTHORIZE_BASE = "https://open.dewu.com/#/authorize"
-SANDBOX_AUTHORIZE_BASE = "https://open-sandbox.dewu.com/#/authorize"
+# 沙箱没有独立的授权页域名（open-sandbox.dewu.com 不解析），
+# 同样走 open.dewu.com，用沙箱 appKey 区分环境。
+SANDBOX_AUTHORIZE_BASE = AUTHORIZE_BASE
 
 TOKEN_PATH = os.getenv("DEWU_TOKEN_PATH", "dop/api/v1/oauth/token")
 REFRESH_TOKEN_PATH = os.getenv("DEWU_REFRESH_TOKEN_PATH", "dop/api/v1/oauth/refresh_token")
