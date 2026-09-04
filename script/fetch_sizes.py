@@ -1,16 +1,22 @@
-"""Fetch selected Adidas SKU sizes and inventory into MongoDB."""
-import argparse, sys
+#!/usr/bin/env python3
+"""Fetch selected Adidas SKU sizes and inventory into MongoDB（CLI）
+
+复用 app/services/full_scan_service.py 的核心逻辑，不重复实现。
+"""
+import argparse
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-# 直接从主抓取脚本复用核心逻辑，不重复实现
-sys.path.insert(0, str(Path(__file__).parent))
-from fetch_all_skus_and_sizes import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app.services.full_scan_service import (
     fetch_availability, _needs_refresh,
     AVAIL_WORKERS, AVAIL_MIN_SLEEP, AVAIL_MAX_SLEEP, AVAIL_RETRIES,
 )
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from mongo_store import MongoStore, sync_products_to_mongo
+from app.dao.mongo_client import MongoConnection
+from app.dao.product_dao import ProductDAO
 
 
 def enrich_sizes(
@@ -107,37 +113,37 @@ def main():
     if args.min_sleep > args.max_sleep:
         parser.error("--min-sleep 不能大于 --max-sleep")
 
-    store = MongoStore.from_environment(required=True)
+    conn = MongoConnection.from_environment(required=True)
     try:
-        data = store.get_products(args.sku)
+        product_dao = ProductDAO(conn.db)
+        data = product_dao.get_products(args.sku)
+        if not data:
+            parser.error("MongoDB 中找不到指定 SKU")
+        print(f"从 MongoDB 读取 {len(data)} 个 SKU")
+
+        items = data[:args.limit] if args.limit > 0 else data
+        if args.limit > 0:
+            print(f"--limit {args.limit}：只处理前 {len(items)} 个")
+
+        enrich_sizes(
+            items,
+            force=args.force,
+            workers=args.workers,
+            retries=args.retries,
+            min_sleep=args.min_sleep,
+            max_sleep=args.max_sleep,
+        )
+
+        batch_id = "size_" + time.strftime("%Y%m%d_%H%M%S")
+        product_dao.upsert_products(
+            items,
+            source_file=batch_id,
+            include_sizes=True,
+            record_price_history=False,
+        )
+        print(f"尺码库存已同步到 MongoDB，批次号: {batch_id}")
     finally:
-        store.close()
-    if not data:
-        parser.error("MongoDB 中找不到指定 SKU")
-    print(f"从 MongoDB 读取 {len(data)} 个 SKU")
-
-    items = data[:args.limit] if args.limit > 0 else data
-    if args.limit > 0:
-        print(f"--limit {args.limit}：只处理前 {len(items)} 个")
-
-    enrich_sizes(
-        items,
-        force=args.force,
-        workers=args.workers,
-        retries=args.retries,
-        min_sleep=args.min_sleep,
-        max_sleep=args.max_sleep,
-    )
-
-    batch_id = "size_" + time.strftime("%Y%m%d_%H%M%S")
-    sync_products_to_mongo(
-        items,
-        source_file=batch_id,
-        include_sizes=True,
-        record_price_history=False,
-        required=True,
-    )
-    print(f"尺码库存已同步到 MongoDB，批次号: {batch_id}")
+        conn.close()
 
 
 if __name__ == "__main__":

@@ -49,17 +49,17 @@ app:
 ```powershell
 $env:MONGODB_URI="mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority"
 $env:PYTHONIOENCODING="utf-8"
-python fetch_all_skus_and_sizes.py --no-sizes
+python script/fetch_all_skus_and_sizes.py --no-sizes
 ```
 
 `.env`、`.build_id_cache`、`__pycache__` 和 Python 字节码已加入 `.gitignore`。
 
-## `fetch_all_skus_and_sizes.py` 主命令运行流程
+## `script/fetch_all_skus_and_sizes.py` 主命令运行流程
 
 直接运行：
 
 ```powershell
-python fetch_all_skus_and_sizes.py
+python script/fetch_all_skus_and_sizes.py
 ```
 
 默认会依次：
@@ -74,13 +74,13 @@ python fetch_all_skus_and_sizes.py
 日常只更新 SKU 和价格，跳过较慢的尺码接口：
 
 ```powershell
-python fetch_all_skus_and_sizes.py --no-sizes
+python script/fetch_all_skus_and_sizes.py --no-sizes
 ```
 
 只抓一个分类：
 
 ```powershell
-python fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
+python script/fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
 ```
 ## MongoDB 写入进度
 
@@ -114,7 +114,7 @@ MongoDB 写入完成: products=12275, price_history=12275
 
 ```powershell
 $env:PYTHONIOENCODING="utf-8"
-python fetch_all_skus_and_sizes.py --no-sizes
+python script/fetch_all_skus_and_sizes.py --no-sizes
 ```
 
 这会：
@@ -126,7 +126,7 @@ python fetch_all_skus_and_sizes.py --no-sizes
 只抓一个分类：
 
 ```powershell
-python fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
+python script/fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
 ```
 
 ## 每日增量更新
@@ -134,7 +134,7 @@ python fetch_all_skus_and_sizes.py --category men-shoes --no-sizes
 价格和 SKU 的日常更新直接执行：
 
 ```powershell
-python fetch_all_skus_and_sizes.py --no-sizes
+python script/fetch_all_skus_and_sizes.py --no-sizes
 ```
 
 脚本会把最新商品 upsert 到 MongoDB，并为本次价格抓取生成新的 `batch_id`。不使用上一轮本地文件，也不会生成本地 JSON。
@@ -142,26 +142,26 @@ python fetch_all_skus_and_sizes.py --no-sizes
 如果需要更新部分重点商品的尺码：
 
 ```powershell
-python fetch_sizes.py --sku JY8928 JR5408
+python script/fetch_sizes.py --sku JY8928 JR5408
 ```
 ## 重点商品尺码抓取
 
 尺码接口较慢，日常不全站抓取。按 SKU 从 MongoDB 读取并更新：
 
 ```powershell
-python fetch_sizes.py --sku JY8928 JR5408
+python script/fetch_sizes.py --sku JY8928 JR5408
 ```
 
 只处理前几个 SKU：
 
 ```powershell
-python fetch_sizes.py --sku JY8928 JR5408 --limit 1
+python script/fetch_sizes.py --sku JY8928 JR5408 --limit 1
 ```
 
 强制刷新已有尺码：
 
 ```powershell
-python fetch_sizes.py --sku JY8928 --force
+python script/fetch_sizes.py --sku JY8928 --force
 ```
 
 全量抓取时如果不加 `--no-sizes`，脚本会从 MongoDB 读取上一轮尺码：稳定库存复用，低库存、新 SKU 和无尺码商品重新请求。
@@ -201,16 +201,16 @@ sale_price
 通常不需要手动运行：
 
 ```powershell
-python fetch_build_id.py
+python script/fetch_build_id.py
 ```
 
 ## 单个商品即时查询
 
-`adidas_monitor.py` 用于临时查询少量 SKU，不负责全站入库：
+`script/adidas_monitor.py` 用于临时查询少量 SKU，不负责全站入库：
 
 ```powershell
-python adidas_monitor.py JY8928
-python adidas_monitor.py --watch JY8928 --interval 300
+python script/adidas_monitor.py JY8928
+python script/adidas_monitor.py --watch JY8928 --interval 300
 ```
 
 ## 分类说明
@@ -228,4 +228,4 @@ accessories
 sale
 ```
 
-分类明细使用英文 slug。当前列表是固定的；如果 Adidas 官网新增商品分类，需要把新 slug 加入 `fetch_all_skus_and_sizes.py` 的 `CATEGORIES`，否则不会自动抓取。
+分类明细使用英文 slug。当前列表是固定的；如果 Adidas 官网新增商品分类，需要把新 slug 加入 `script/fetch_all_skus_and_sizes.py` 的 `CATEGORIES`，否则不会自动抓取。

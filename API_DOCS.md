@@ -187,7 +187,7 @@ curl -X POST http://localhost:8080/scan/full \
 
 ### `POST /scan/full-with-sizes` — 立即触发全量扫描（含尺码库存）
 
-在全量扫描的基础上，为每个发现的 SKU 补充尺码库存（等价于 CLI 脚本 `fetch_all_skus_and_sizes.py` 不加 `--no-sizes` 参数的完整流程）。**这是定时任务每 30 分钟应该调用的接口。**
+在全量扫描的基础上，为每个发现的 SKU 补充尺码库存（等价于 CLI 脚本 `script/fetch_all_skus_and_sizes.py` 不加 `--no-sizes` 参数的完整流程）。**这是定时任务每 30 分钟应该调用的接口。**
 
 请求体、请求示例与 `/scan/full` 相同，路径不同：`POST /scan/full-with-sizes`。
 

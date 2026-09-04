@@ -1,16 +1,20 @@
-"""并行扫描引擎 - 支持大规模 SKU 扫描"""
-import asyncio
+"""监控列表并行扫描 + 变化检测 + 通知触发"""
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from adidas_monitor import check_sku
-from models import ProductSnapshot, SizeInfo
-from notifier import get_notifier
-from storage import ChangeDetector
+from app.services.product_service import check_sku
+from app.services.slack_service import SlackNotifier
+from app.models.entities import ProductSnapshot, SizeInfo
+from app.dao.product_dao import ProductDAO
+from app.dao.watch_dao import WatchDAO
+from app.dao.notification_dao import NotificationDAO
 
 logger = logging.getLogger(__name__)
+
+DUPLICATE_NOTIFICATION_HOURS = 2
 
 
 class ScanResult:
@@ -38,23 +42,33 @@ class ScanResult:
         return (self.successful_scans / self.total_skus) * 100
 
 
-class ParallelScanner:
-    """并行扫描器"""
+class ScanService:
+    """并行扫描监控列表中的 SKU，检测库存变化并触发 Slack 通知"""
 
-    def __init__(self, mongo_collection, max_workers: int = 24, max_retries: int = 3):
+    def __init__(
+        self,
+        product_dao: ProductDAO,
+        watch_dao: WatchDAO,
+        notification_dao: NotificationDAO,
+        notifier: SlackNotifier,
+        max_workers: int = 24,
+        max_retries: int = 3,
+    ):
         """
-        初始化扫描器
-
         Args:
-            mongo_collection: MongoDB 集合
+            product_dao: 产品快照读写
+            watch_dao: 观察列表读取
+            notification_dao: 通知记录读写（用于去重和历史）
+            notifier: Slack 通知器
             max_workers: 最大并发线程数
             max_retries: 单个 SKU 最大重试次数
         """
-        self.mongo_collection = mongo_collection
+        self.product_dao = product_dao
+        self.watch_dao = watch_dao
+        self.notification_dao = notification_dao
+        self.notifier = notifier
         self.max_workers = max_workers
         self.max_retries = max_retries
-        self.change_detector = ChangeDetector(mongo_collection)
-        self.notifier = get_notifier()
 
     def scan_skus(self, skus: List[str]) -> ScanResult:
         """
@@ -115,16 +129,10 @@ class ParallelScanner:
         for attempt in range(self.max_retries):
             try:
                 raw_result = check_sku(sku)
-
-                # 转换为 ProductSnapshot
-                snapshot = self._convert_to_snapshot(raw_result)
-                return snapshot
-
+                return self._convert_to_snapshot(raw_result)
             except Exception as e:
                 if attempt < self.max_retries - 1:
                     logger.debug(f"[{sku}] 尝试 {attempt + 1}/{self.max_retries} 失败，重试中...")
-                    import time
-
                     time.sleep(0.5)  # 重试前等待
                 else:
                     logger.error(f"[{sku}] 所有重试都失败: {e}")
@@ -167,19 +175,82 @@ class ParallelScanner:
             checked_at=datetime.utcnow(),
         )
 
+    # ===== 变化检测（原 storage.ChangeDetector）=====
+
+    def _detect_changes(self, current_snapshot: ProductSnapshot) -> Dict[str, List[str]]:
+        """
+        检测当前快照与上次的变化
+
+        Returns:
+            {
+                'new_in_stock': [size1, size2],     # 新有货的尺码
+                'went_out_of_stock': [size3],       # 刚下架的尺码
+            }
+        """
+        sku = current_snapshot.sku
+        previous = self.product_dao.find_by_sku(sku)
+
+        if not previous:
+            # 第一次扫描，当前有货的都算"新有货"
+            return {
+                "new_in_stock": [s.size for s in current_snapshot.in_stock_sizes],
+                "went_out_of_stock": [],
+            }
+
+        # 对比库存状态
+        current_in_stock = {s.size for s in current_snapshot.in_stock_sizes}
+        previous_in_stock = {s["size"] for s in previous.get("in_stock_sizes", [])}
+
+        new_in_stock = current_in_stock - previous_in_stock
+        went_out_of_stock = previous_in_stock - current_in_stock
+
+        return {
+            "new_in_stock": list(new_in_stock),
+            "went_out_of_stock": list(went_out_of_stock),
+        }
+
+    def _find_watched_changes(self, sku: str, changes: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+        """找出用户关注的变化"""
+        watch_items = self.watch_dao.get_by_sku(sku)
+
+        matched = []
+        for watch_item in watch_items:
+            if watch_item.size in changes["new_in_stock"]:
+                matched.append(
+                    {
+                        "watch_item_id": watch_item.id,
+                        "sku": sku,
+                        "size": watch_item.size,
+                        "name": watch_item.name,
+                        "color": watch_item.color,
+                        "change_type": "new_in_stock",
+                    }
+                )
+            elif watch_item.size in changes["went_out_of_stock"]:
+                matched.append(
+                    {
+                        "watch_item_id": watch_item.id,
+                        "sku": sku,
+                        "size": watch_item.size,
+                        "name": watch_item.name,
+                        "color": watch_item.color,
+                        "change_type": "went_out_of_stock",
+                    }
+                )
+
+        return matched
+
     def _handle_changes(self, snapshot: ProductSnapshot, result: ScanResult):
         """处理库存变化并发送通知"""
         # 检测变化
-        changes = self.change_detector.detect_changes(snapshot)
+        changes = self._detect_changes(snapshot)
 
         # 只处理有货的变化
         if not changes["new_in_stock"]:
             return
 
         # 查找用户关注的变化
-        watched_changes = self.change_detector.find_watched_changes(
-            snapshot.sku, changes
-        )
+        watched_changes = self._find_watched_changes(snapshot.sku, changes)
 
         if not watched_changes:
             return
@@ -196,8 +267,8 @@ class ParallelScanner:
 
     def _should_notify(self, sku: str, size: str) -> bool:
         """检查是否应该发送通知（去重）"""
-        recent_notif = self.change_detector.watch_store.get_recent_notification(
-            sku, size, hours=2  # 2小时内不重复通知
+        recent_notif = self.notification_dao.get_recent(
+            sku, size, hours=DUPLICATE_NOTIFICATION_HOURS
         )
         return recent_notif is None
 
@@ -205,7 +276,7 @@ class ParallelScanner:
         """发送单个商品通知"""
         try:
             # 记录通知
-            self.change_detector.watch_store.record_notification(
+            self.notification_dao.record(
                 sku=snapshot.sku,
                 size=change["size"],
                 watch_item_id=change["watch_item_id"],
@@ -236,16 +307,8 @@ class ParallelScanner:
             return
 
         try:
-            # 批量更新或插入
             for snapshot in snapshots:
-                self.mongo_collection.update_one(
-                    {"sku": snapshot.sku},
-                    {
-                        "$set": snapshot.to_dict(),
-                        "$setOnInsert": {"created_at": datetime.utcnow()},
-                    },
-                    upsert=True,
-                )
+                self.product_dao.save_snapshot(snapshot.sku, snapshot.to_dict())
 
             logger.info(f"已保存 {len(snapshots)} 个产品快照到数据库")
 

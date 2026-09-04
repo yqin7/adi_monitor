@@ -14,3 +14,8 @@ __pycache__/
 
 # IDE project files
 .idea/
+
+# Virtualenv
+.venv/
+# Claude Code local worktrees/settings
+.claude/

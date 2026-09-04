@@ -1,16 +1,24 @@
-"""Fetch Adidas product SKU and price data into MongoDB.
+"""全站 PLP 抓取 + 尺码库存补充（发现全站 SKU 的核心业务逻辑）"""
+from __future__ import annotations
 
-The default workflow is MongoDB-only; no local product JSON is written.
-"""
-import argparse, time, sys, random
+import re
+import time
+import random
 from collections import Counter
 from datetime import datetime
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from curl_cffi import requests as cf_requests
-from adidas_monitor import check_sku
-from mongo_store import MongoStore
-from mongo_store import sync_products_to_mongo
+
+from app.core.config import (
+    load_config,
+    get_requests_proxies,
+    proxy_enabled,
+    use_env_proxy,
+)
+from app.core.paths import PROJECT_ROOT
+from app.services.product_service import check_sku
+from app.dao.mongo_client import MongoConnection
+from app.dao.product_dao import ProductDAO
 
 # ── 配置 ───────────────────────────────────────────────────────────────────────
 IMPERSONATE   = "chrome131"
@@ -42,8 +50,30 @@ CATEGORIES = [
     ("sale",            "path=us&taxonomy=sale",   "sale",  1),
 ]
 
+# ── HTTP 会话 ─────────────────────────────────────────────────────────────────
+def make_session(config: dict | None = None) -> cf_requests.Session:
+    """按 config.yaml 的 proxy 开关创建会话。
+
+    proxy.enabled = true  -> 只走配置的代理
+    proxy.enabled = false -> 真正直连（默认忽略 HTTP_PROXY 等环境变量；
+                             想沿用系统代理设 proxy.use_env_proxy: true）
+    """
+    cfg = config if config is not None else load_config()
+    if proxy_enabled(cfg):
+        session = cf_requests.Session(trust_env=False)
+        session.proxies = get_requests_proxies(cfg)
+        print(f"代理：已启用 -> {session.proxies['https']}", flush=True)
+    elif use_env_proxy(cfg):
+        session = cf_requests.Session(trust_env=True)
+        print("代理：未配置，沿用系统环境变量代理", flush=True)
+    else:
+        session = cf_requests.Session(trust_env=False)
+        print("代理：已关闭（直连）", flush=True)
+    return session
+
+
 # ── buildId 管理 ───────────────────────────────────────────────────────────────
-BUILD_ID_CACHE = Path(__file__).parent / ".build_id_cache"
+BUILD_ID_CACHE = PROJECT_ROOT / ".build_id_cache"
 FAILED_PAGES: list[dict] = []
 
 def _validate_build_id(session: cf_requests.Session, bid: str, source: str) -> str | None:
@@ -60,18 +90,47 @@ def _validate_build_id(session: cf_requests.Session, bid: str, source: str) -> s
         print(f"错误: {e}")
     return None
 
-def auto_discover_build_id(session: cf_requests.Session) -> str | None:
-    """Open Adidas pages, discover the current Next.js buildId, and validate it."""
+def discover_build_id_from_data_404(session: cf_requests.Session) -> str | None:
+    """用一个失效 buildId 请求 data 接口，从返回的 404 页面里提取当前 buildId。
+
+    这条路不经过 HTML 页面（首页/分类页会被 Akamai 403 拦截），也不需要浏览器。
+    """
+    probe = BASE_URL.format(build_id="0" * 21, slug="men-shoes") + "?start=0&path=us"
     try:
-        from fetch_build_id import DEFAULT_URLS, discover_from_page
+        r = session.get(probe, impersonate=IMPERSONATE, timeout=25)
+    except Exception as exc:
+        print(f"  404 探测请求失败: {exc}", flush=True)
+        return None
+
+    for pattern in (r'"buildId"\s*:\s*"([A-Za-z0-9_-]{8,})"',
+                    r'/_next/static/([A-Za-z0-9_-]{8,})/_ssgManifest\.js',
+                    r'/_next/static/([A-Za-z0-9_-]{8,})/_buildManifest\.js'):
+        for candidate in re.findall(pattern, r.text):
+            if candidate.lower() not in ("css", "chunks", "media", "static") and "0" * 21 != candidate:
+                return candidate
+    return None
+
+
+def auto_discover_build_id(session: cf_requests.Session) -> str | None:
+    """发现当前 Next.js buildId 并校验。优先走 404 页面，失败再回退 Playwright。"""
+    print("自动获取 buildId：探测 data 接口 404 页面 ...", flush=True)
+    bid = discover_build_id_from_data_404(session)
+    if bid:
+        print(f"  探测到 buildId: {bid}", flush=True)
+        validated = _validate_build_id(session, bid, "404探测")
+        if validated:
+            return validated
+
+    try:
+        from app.services import build_id_service
     except Exception as exc:
         print(f"自动获取 buildId 失败：缺少 Playwright 或依赖错误: {exc}", flush=True)
         return None
 
-    for url in DEFAULT_URLS:
+    for url in build_id_service.DEFAULT_URLS:
         print(f"自动获取 buildId：打开 {url} ...", flush=True)
         try:
-            bid = discover_from_page(url=url, timeout_ms=30000, headed=False)
+            bid = build_id_service.discover_from_page(url=url, timeout_ms=30000, headed=False)
         except Exception as exc:
             print(f"  页面探测失败: {exc}", flush=True)
             continue
@@ -227,7 +286,7 @@ def fetch_category(
     print(f"  完成: {len(results)} 条                    ")
     return results
 
-# ── availability 请求（复用 adidas_monitor 的单 SKU 逻辑）──────────────────────
+# ── availability 请求（复用 product_service 的单 SKU 逻辑）─────────────────────
 def fetch_availability(
     sku: str,
     retries: int = AVAIL_RETRIES,
@@ -380,7 +439,7 @@ def run_full_scan(
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    session = cf_requests.Session()
+    session = make_session()
     _report("build_id", "获取 buildId ...")
     resolved_build_id = load_build_id(session, build_id)
     if not resolved_build_id:
@@ -440,31 +499,30 @@ def run_full_scan(
 
     batch_id = f"price_{ts}"
     _report("mongo_price", "写入价格数据到 MongoDB ...")
-    sync_products_to_mongo(
-        deduped,
-        source_file=batch_id,
-        include_sizes=False,
-        record_price_history=True,
-        required=True,
-    )
-
-    if include_sizes:
-        _report("sizes", "补充尺码库存 ...")
-        store = MongoStore.from_environment(required=True)
-        try:
-            previous = store.get_products([item["sku"] for item in deduped])
-        finally:
-            store.close()
-        prev_map = {item["sku"]: item.get("sizes", []) for item in previous}
-        enrich_sizes(deduped, prev_map)
-        _report("mongo_sizes", "写入尺码库存数据到 MongoDB ...")
-        sync_products_to_mongo(
+    conn = MongoConnection.from_environment(required=True)
+    try:
+        product_dao = ProductDAO(conn.db)
+        product_dao.upsert_products(
             deduped,
             source_file=batch_id,
-            include_sizes=True,
-            record_price_history=False,
-            required=True,
+            include_sizes=False,
+            record_price_history=True,
         )
+
+        if include_sizes:
+            _report("sizes", "补充尺码库存 ...")
+            previous = product_dao.get_products([item["sku"] for item in deduped])
+            prev_map = {item["sku"]: item.get("sizes", []) for item in previous}
+            enrich_sizes(deduped, prev_map)
+            _report("mongo_sizes", "写入尺码库存数据到 MongoDB ...")
+            product_dao.upsert_products(
+                deduped,
+                source_file=batch_id,
+                include_sizes=True,
+                record_price_history=False,
+            )
+    finally:
+        conn.close()
 
     cats_count = Counter(x["category"] for x in deduped)
     with_sale = [x for x in deduped if x["sale_price"] and x["orig_price"]
@@ -483,43 +541,3 @@ def run_full_scan(
     }
     _report("done", f"完成！共 {len(deduped)} 个唯一 SKU，批次号: {batch_id}")
     return summary
-
-
-# ── 主函数（CLI 入口）───────────────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(description="Adidas PLP 全量价格抓取（MongoDB-only）")
-    parser.add_argument("--build-id", help="Next.js buildId（默认自动获取）")
-    parser.add_argument("--category", help="只抓单个分类 slug（如 sale / men-shoes）")
-    parser.add_argument("--plp-workers", type=int, default=PLP_WORKERS,
-                        help=f"PLP 翻页并发线程数（默认 {PLP_WORKERS}）")
-    parser.add_argument("--no-sizes", action="store_true",
-                        help="跳过尺码/库存抓取")
-    args = parser.parse_args()
-    if args.plp_workers <= 0:
-        parser.error("--plp-workers 必须大于 0")
-
-    try:
-        summary = run_full_scan(
-            category=args.category,
-            plp_workers=args.plp_workers,
-            include_sizes=not args.no_sizes,
-            build_id=args.build_id,
-        )
-    except (RuntimeError, ValueError) as e:
-        print(str(e), flush=True)
-        sys.exit(1)
-
-    print(f"\n{'=' * 60}")
-    print(f"完成！共 {summary['total_skus']} 个唯一 SKU")
-    print(f"批次号: {summary['batch_id']}")
-    print("分类明细:")
-    for cat, n in sorted(summary["categories"].items(), key=lambda x: -x[1]):
-        print(f"  {cat}: {n}")
-    print(f"打折商品: {summary['with_sale']}")
-    print(f"售罄商品: {summary['sold_out']}")
-    if summary["price_range"]:
-        print(f"价格区间: ${summary['price_range'][0]} - ${summary['price_range'][1]}")
-
-
-if __name__ == "__main__":
-    main()
