@@ -1,85 +1,23 @@
 #!/usr/bin/env python3
 """
-Adidas 商品价格 & 尺码库存监控脚本
+Adidas 商品价格 & 尺码库存监控脚本（CLI）
 用法:
-    python adidas_monitor.py                  # 查一次 JR5408
-    python adidas_monitor.py JR5408 JR5410    # 查多个 SKU
-    python adidas_monitor.py --watch JR5408   # 每5分钟持续监控
+    python script/adidas_monitor.py                  # 查一次 JR5408
+    python script/adidas_monitor.py JR5408 JR5410    # 查多个 SKU
+    python script/adidas_monitor.py --watch JR5408   # 每5分钟持续监控
+
+核心查询逻辑见 app/services/product_service.py。
 """
 
-import sys
 import json
+import sys
 import time
 import argparse
-from datetime import datetime
+from pathlib import Path
 
-try:
-    from curl_cffi import requests
-except ImportError:
-    print("请先安装依赖: pip install curl_cffi")
-    sys.exit(1)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-IMPERSONATE = "chrome131"
-
-PRODUCT_URL = "https://www.adidas.com/api/products/{sku}?sitePath=us"
-AVAIL_URL = "https://www.adidas.com/api/products/{sku}/availability?sitePath=us"
-
-
-def _get(url: str) -> dict:
-    resp = requests.get(url, impersonate=IMPERSONATE, timeout=15)
-    resp.raise_for_status()
-    return resp.json()
-
-
-def check_sku(sku: str) -> dict:
-    """整合产品信息 + 库存，返回结构化结果"""
-    sku = sku.upper().strip()
-
-    detail = _get(PRODUCT_URL.format(sku=sku))
-    avail = _get(AVAIL_URL.format(sku=sku))
-
-    pi = detail.get("pricing_information", {})
-    sale_price = pi.get("sale_price") or pi.get("currentPrice")
-    original_price = pi.get("standard_price")
-    if sale_price is None:
-        for p in detail.get("price_information", []):
-            if p["type"] == "sale":
-                sale_price = p["value"]
-            elif p["type"] == "original":
-                original_price = original_price or p["value"]
-
-    currency = detail.get("pricing_information", {}).get("currency", "USD")
-    if currency == "USD" and not pi.get("currency"):
-        currency = "USD"
-
-    sizes = []
-    for v in avail.get("variation_list", []):
-        sizes.append({
-            "sku":    v["sku"],
-            "size":   v["size"],
-            "status": v["availability_status"],
-            "qty":    v.get("availability", 0),
-        })
-
-    in_stock = [s for s in sizes if s["status"] == "IN_STOCK"]
-
-    color = detail.get("attribute_list", {}).get("color", "")
-    if not color:
-        desc = detail.get("product_description", {})
-        color = desc.get("color", "")
-
-    return {
-        "sku":            sku,
-        "name":           detail.get("name", ""),
-        "color":          color,
-        "currency":       currency,
-        "original_price": original_price,
-        "sale_price":     sale_price,
-        "overall_status": avail.get("availability_status", "UNKNOWN"),
-        "sizes":          sizes,
-        "in_stock_sizes": in_stock,
-        "checked_at":     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
+from app.services.product_service import check_sku
 
 
 def print_result(r: dict):

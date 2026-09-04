@@ -1,4 +1,4 @@
-"""数据模型定义"""
+"""领域实体（数据库存取对象）"""
 from datetime import datetime
 from typing import Optional, List
 from dataclasses import dataclass, asdict

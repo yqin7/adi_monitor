@@ -24,6 +24,17 @@ app:
   request_timeout: 20         # 请求超时（秒）
   log_level: "INFO"           # 日志级别
 
+# 代理配置（用于绕过 IP 限制/反爬）
+proxy:
+  enabled: false               # 是否启用代理
+  protocol: "http"             # http / https / socks5
+  host: ""                     # 代理服务器 IP 或域名
+  port: 0                      # 代理服务器端口
+  username: ""                 # 代理认证用户名（可选）
+  password: ""                 # 代理认证密码（可选）
+  use_env_proxy: false         # enabled=false 时是否仍沿用系统 HTTP_PROXY/HTTPS_PROXY
+                               # 默认 false = 本地测试真正直连，不被系统代理接管
+
 # Slack 通知配置
 slack:
   enabled: true

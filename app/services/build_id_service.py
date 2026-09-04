@@ -1,25 +1,15 @@
-"""
-使用 Playwright 自动打开 Adidas 页面并提取最新 buildId。
-
-用法:
-  python fetch_build_id.py
-  python fetch_build_id.py --url https://www.adidas.com/us/accessories
-  python fetch_build_id.py --headed
-  python fetch_build_id.py --timeout 30000
-"""
-
+"""使用 Playwright 自动打开 Adidas 页面并提取最新 Next.js buildId"""
 from __future__ import annotations
 
-import argparse
 import re
-import sys
-from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from app.core.config import load_config, get_playwright_proxy
+from app.core.paths import PROJECT_ROOT
 
-BUILD_ID_CACHE = Path(__file__).parent / ".build_id_cache"
+BUILD_ID_CACHE = PROJECT_ROOT / ".build_id_cache"
 DEFAULT_URLS = [
     "https://www.adidas.com/us",
     "https://www.adidas.com/us/accessories",
@@ -115,6 +105,12 @@ def discover_from_page(url: str, timeout_ms: int, headed: bool) -> str | None:
             "args": ["--disable-blink-features=AutomationControlled"],
         }
         try:
+            proxy = get_playwright_proxy(load_config())
+        except Exception:
+            proxy = None
+        if proxy:
+            launch_kwargs["proxy"] = proxy
+        try:
             browser = p.chromium.launch(channel="chrome", **launch_kwargs)
         except Exception:
             browser = p.chromium.launch(**launch_kwargs)
@@ -197,37 +193,3 @@ def discover_from_page(url: str, timeout_ms: int, headed: bool) -> str | None:
             raise
 
     return seen_candidates[0] if seen_candidates else None
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="用 Playwright 自动获取 Adidas buildId")
-    parser.add_argument("--url", action="append", dest="urls", help="自定义要尝试的页面 URL，可多次传入")
-    parser.add_argument("--timeout", type=int, default=20000, help="页面加载超时（毫秒），默认 20000")
-    parser.add_argument("--headed", action="store_true", help="以可见浏览器模式运行")
-    parser.add_argument("--no-cache", action="store_true", help="只打印结果，不写入 .build_id_cache")
-    args = parser.parse_args()
-
-    urls = args.urls or DEFAULT_URLS
-
-    for url in urls:
-        print(f"尝试页面: {url}", flush=True)
-        try:
-            bid = discover_from_page(url=url, timeout_ms=args.timeout, headed=args.headed)
-        except Exception as e:
-            print(f"  失败: {e}", flush=True)
-            continue
-
-        if bid:
-            print(f"发现 buildId: {bid}")
-            if not args.no_cache:
-                BUILD_ID_CACHE.write_text(bid, encoding="utf-8")
-                print(f"已写入缓存: {BUILD_ID_CACHE}")
-            return
-        print("  未提取到 buildId", flush=True)
-
-    print("未能自动获取 buildId")
-    sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
