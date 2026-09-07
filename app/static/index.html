@@ -60,7 +60,13 @@
   tbody tr:hover{background:rgba(127,127,127,.06)}
   .pos{color:var(--pos);font-weight:600}
   .neg{color:var(--neg)}
-  .name{max-width:270px;overflow:hidden;text-overflow:ellipsis}
+  .name{max-width:290px;overflow:hidden;text-overflow:ellipsis}
+  .cat{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;
+       font-size:11px;background:rgba(99,132,255,.16);color:var(--muted)}
+  .stk{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px}
+  .stk.unk{color:var(--muted);opacity:.55}
+  .stk.ok{background:rgba(16,160,80,.18);color:var(--pos)}
+  .stk.no{background:rgba(200,50,40,.16);color:var(--neg)}
   .sku{font-family:ui-monospace,Menlo,monospace;font-size:12px}
   .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;
        background:rgba(127,127,127,.15);color:var(--muted)}
@@ -72,6 +78,10 @@
   input.ov.set{background:var(--hl);border-style:solid;font-weight:600}
   .empty{padding:44px;text-align:center;color:var(--muted)}
   .fx{font-size:12px;color:var(--muted);margin-left:auto;text-align:right}
+  .tabs{display:flex;gap:6px;margin-bottom:14px}
+  .tabs button{background:transparent;color:var(--muted);border:1px solid var(--line);
+               padding:8px 22px;font-size:14px}
+  .tabs button.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
   a{color:inherit}
 </style>
 </head>
@@ -80,18 +90,23 @@
   <h1>Adidas × 得物 比价</h1>
   <div class="sub">填入你的返利与运费，回车即刻重算利润</div>
 
+  <div class="tabs">
+    <button id="tabUs" class="active" data-site="us">🇺🇸 美国站</button>
+    <button id="tabKr" data-site="kr">🇰🇷 韩国站</button>
+  </div>
+
   <div class="panel">
     <h2>成本参数</h2>
     <div class="grid">
       <div class="f"><label class="tip" data-tip="留空则各商品用自带促销码折扣">全局折扣</label>
         <input id="promo" type="number" step="0.01" min="0" max="1" placeholder="如 0.7"></div>
       <div class="f"><label>Rakuten 返利 %</label><input id="rakuten" type="number" step="0.1" placeholder="0"></div>
-      <div class="f"><label class="tip" data-tip="单笔返利上限 $50">RetailMeNot 返利 %</label>
+      <div class="f" id="rmnBox"><label class="tip" data-tip="单笔返利上限 $50">RetailMeNot 返利 %</label>
         <input id="rmn" type="number" step="0.1" value="0"></div>
       <div class="f"><label>银行卡返利 %</label><input id="bank" type="number" step="0.1" value="3"></div>
       <div class="f"><label>运费 ¥/件</label><input id="ship" type="number" step="0.1" value="0"></div>
       <div class="f"><label>销售税 %</label><input id="tax" type="number" step="0.1" value="0"></div>
-      <div class="f"><label>汇率 USD→CNY</label><input id="fx" type="number" step="0.0001"></div>
+      <div class="f"><label id="fxLabel">汇率 USD→CNY</label><input id="fx" type="number" step="0.000001"></div>
       <div class="f"><label>&nbsp;</label><button id="apply">确认重算</button></div>
       <div class="fx" id="fxInfo">汇率加载中…</div>
     </div>
@@ -106,6 +121,8 @@
       <div class="f"><label>最低月销</label><input id="minSales" type="number" value="20"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤，负利润也显示">最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤">最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
+      <div class="f"><label class="tip" data-tip="仅韩国站能拿到尺码库存；美国站无此数据，勾选后会全部过滤掉">只显示有货</label>
+        <select id="stockOnly"><option value="0">全部</option><option value="1">仅有货</option></select></div>
       <div class="f"><label>&nbsp;</label><button class="ghost" id="reset">重置</button></div>
       <div class="f"><label>&nbsp;</label><button class="ghost" id="clearOv">清除单品自定义</button></div>
       <div class="fx" id="ovInfo"></div>
@@ -117,11 +134,15 @@
   <div class="tablewrap">
     <table>
       <thead><tr>
-        <th data-k="sku">货号</th><th>名称</th><th>尺码</th><th>促销码</th>
+        <th data-k="sku">货号</th><th>名称</th>
+        <th data-k="category">类别</th>
+        <th>尺码</th>
+        <th data-k="in_stock">库存</th>
+        <th>促销码</th>
         <th title="留空则用商品自带折扣">折扣<br><span style="font-weight:400;opacity:.6">如 0.7</span></th>
         <th title="留空则用上方统一运费">运费 ¥</th>
-        <th data-k="price_usd" class="num">Adidas 售价 $</th>
-        <th data-k="net_usd" class="num" title="美元货款实付，不含运费">货款 $</th>
+        <th data-k="price_usd" class="num" id="thPrice">Adidas 售价 $</th>
+        <th data-k="net_usd" class="num" id="thNet" title="货款实付，不含运费">货款 $</th>
         <th data-k="cost_cny" class="num" title="货款折人民币 + 运费">总成本 ¥</th>
         <th data-k="dewu_price" class="num">得物价 ¥</th>
         <th data-k="payout" class="num">得物到手 ¥</th>
@@ -139,6 +160,16 @@
 <script>
 const $ = s => document.querySelector(s);
 let RAW = [], FEES = null, sortBy = 'profit', order = 'desc';
+let SITE = 'us', FX = null;
+const CAT = {
+  'men-shoes':'男鞋', 'women-shoes':'女鞋', 'kids-shoes':'童鞋',
+  'men-clothing':'男装', 'women-clothing':'女装', 'kids-clothing':'童装',
+  'accessories':'配件', 'sale':'特价',
+};
+const CFG = {
+  us: {cur:'$', fxKey:'usd_cny', fxLabel:'汇率 USD→CNY', rmn:true,  step:'0.0001'},
+  kr: {cur:'₩', fxKey:'krw_cny', fxLabel:'汇率 KRW→CNY', rmn:false, step:'0.000001'},
+};
 /* 单品级覆盖：{ sku: {promo: 0.7, ship: 3.5} }，存 localStorage，刷新不丢 */
 let OVERRIDES = {};
 try { OVERRIDES = JSON.parse(localStorage.getItem('dewu_overrides') || '{}'); } catch (e) {}
@@ -160,7 +191,8 @@ function calc(r) {
   const afterPromo = r.price_usd * promo;
 
   const cbRakuten = afterPromo * num('rakuten') / 100;
-  const cbRmn     = Math.min(afterPromo * num('rmn') / 100, 50);   // 上限 $50
+  // 韩国站没有 RetailMeNot；美国站单笔封顶 $50
+  const cbRmn = CFG[SITE].rmn ? Math.min(afterPromo * num('rmn') / 100, 50) : 0;
   const cbBank    = afterPromo * num('bank') / 100;
   const cashback  = cbRakuten + cbRmn + cbBank;
 
@@ -191,10 +223,12 @@ function render() {
   const minSales = num('minSales');
   const minProfit = lim('minProfit');
   const minRoiPct = lim('minRoi');
+  const stockOnly = $('#stockOnly').value === '1';
   let rows = RAW.map(calc).filter(r =>
     (r.monthly_sales || 0) >= minSales
     && (minProfit === null || r.profit >= minProfit)
-    && (minRoiPct === null || r.roi >= minRoiPct / 100));
+    && (minRoiPct === null || r.roi >= minRoiPct / 100)
+    && (!stockOnly || r.in_stock === true));
 
   const dir = order === 'desc' ? -1 : 1;
   rows.sort((a, b) => {
@@ -224,7 +258,12 @@ function render() {
     return `<tr>
       <td class="sku">${link}</td>
       <td class="name" title="${(r.name || '').replace(/"/g, '&quot;')}">${r.name || '—'}</td>
+      <td><span class="cat">${CAT[r.category] || r.category || '—'}</span></td>
       <td><span class="tag">${r.size ?? '—'}</span></td>
+      <td>${
+        r.in_stock === true ? '<span class="stk ok">有货</span>'
+      : r.in_stock === false ? '<span class="stk no">断码</span>'
+      : '<span class="stk unk" title="该站点无尺码库存数据">—</span>'}</td>
       <td>${code}</td>
       <td><input class="ov" data-f="promo" data-sku="${r.sku}" type="number" step="0.01"
                  min="0" max="1" value="${ov.promo ?? ''}" placeholder="${effPromo(r).toFixed(2)}"></td>
@@ -253,15 +292,17 @@ function render() {
 async function loadFx() {
   try {
     const d = await (await fetch('/arbitrage/fx')).json();
-    $('#fx').value = d.usd_cny;
+    FX = d;
+    const key = CFG[SITE].fxKey;
+    if (d[key] != null) $('#fx').value = Number(d[key]).toFixed(6);
     $('#fxInfo').innerHTML = d.live
-      ? `实时汇率 ${d.usd_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
-      : `未取到实时汇率，使用配置值 ${d.usd_cny}`;
+      ? `USD→CNY ${d.usd_cny} · KRW→CNY ${d.krw_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
+      : `未取到实时汇率，使用配置值`;
   } catch (e) { $('#fx').value = 7.12; $('#fxInfo').textContent = '汇率获取失败，请手填'; }
 }
 
 async function loadData() {
-  const d = await (await fetch('/arbitrage/raw')).json();
+  const d = await (await fetch('/arbitrage/raw?site=' + SITE)).json();
   RAW = d.items || []; FEES = d.sell_cn_fees;
   render();
 }
@@ -282,17 +323,35 @@ $('#rows').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.classList.contains('ov')) e.target.blur();
 });
 
+async function switchSite(site) {
+  SITE = site;
+  const c = CFG[site];
+  document.querySelectorAll('.tabs button').forEach(b =>
+    b.classList.toggle('active', b.dataset.site === site));
+  $('#rmnBox').hidden = !c.rmn;                     // 韩国站隐藏 RetailMeNot
+  $('#fxLabel').textContent = c.fxLabel;
+  $('#fx').step = c.step;
+  $('#thPrice').textContent = `Adidas 售价 ${c.cur}`;
+  $('#thNet').textContent = `货款 ${c.cur}`;
+  if (FX && FX[c.fxKey] != null) $('#fx').value = Number(FX[c.fxKey]).toFixed(6);
+  await loadData();
+}
+document.querySelectorAll('.tabs button').forEach(b =>
+  b.onclick = () => switchSite(b.dataset.site));
+
 $('#apply').onclick = render;
 $('#reset').onclick = () => {
   $('#promo').value = '';
   ['rakuten','rmn','bank','ship','tax'].forEach((k, i) => $('#' + k).value = ['',0,3,0,0][i]);
   $('#minSales').value = 20; $('#minProfit').value = ''; $('#minRoi').value = '';
+  $('#stockOnly').value = '0';
   loadFx().then(render);
 };
 document.querySelectorAll('input').forEach(el =>
   el.addEventListener('keydown', e => { if (e.key === 'Enter') render(); }));
 $('#clearOv').onclick = () => { OVERRIDES = {}; saveOv(); render(); };
 $('#sortBy').onchange = () => { sortBy = $('#sortBy').value; render(); };
+$('#stockOnly').onchange = render;
 document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
   const k = th.dataset.k;
   if (sortBy === k) order = order === 'desc' ? 'asc' : 'desc';
@@ -301,7 +360,7 @@ document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
   render();
 });
 
-loadFx().then(loadData);
+(async () => { await loadFx(); await loadData(); })();
 </script>
 </body>
 </html>

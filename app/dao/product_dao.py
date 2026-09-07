@@ -17,7 +17,9 @@ class ProductDAO:
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
-        self.collection.create_index("sku", unique=True)
+        # 同一货号在不同站点（us/kr）价格不同，必须按 (sku, site) 区分
+        self.collection.create_index([("sku", 1), ("site", 1)], unique=True)
+        self.collection.create_index("site")
         self.collection.create_index("category")
         self.collection.create_index("updated_at")
         try:
@@ -29,7 +31,7 @@ class ProductDAO:
             self.history.drop_index("sku_1_observed_at_1")
         except Exception:
             pass
-        self.history.create_index([("sku", 1), ("batch_id", 1)], unique=True)
+        self.history.create_index([("sku", 1), ("site", 1), ("batch_id", 1)], unique=True)
 
     def get_products(self, skus: list[str] | None = None) -> list[dict[str, Any]]:
         query = {}
@@ -80,6 +82,8 @@ class ProductDAO:
 
             document = dict(item)
             document["sku"] = sku
+            site = str(item.get("site") or "us").lower()
+            document["site"] = site
             document["updated_at"] = now
             document["source_file"] = source_file
             if record_price_history:
@@ -93,11 +97,13 @@ class ProductDAO:
                 document.pop("overall_status", None)
                 document.pop("checked_at", None)
 
-            product_ops.append(UpdateOne({"sku": sku}, {"$set": document}, upsert=True))
+            product_ops.append(UpdateOne({"sku": sku, "site": site},
+                                        {"$set": document}, upsert=True))
 
             if record_price_history:
                 history_doc = {
                     "sku": sku,
+                    "site": site,
                     "batch_id": batch_id,
                     "observed_at": now,
                     "sale_price": item.get("sale_price"),

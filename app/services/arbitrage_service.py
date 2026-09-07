@@ -50,8 +50,8 @@ def _fetch_one(sku: str, region: str, currency: str) -> tuple[str, dict | None, 
 
 
 def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
-                   include_missed: bool = False, region: str = "CN",
-                   currency: str = "CNY",
+                   include_missed: bool = False, site: str | None = None,
+                   region: str = "CN", currency: str = "CNY",
                    progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     """拉取得物报价并落库。
 
@@ -71,6 +71,8 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     q: dict[str, Any] = {}
     if only_discounted:
         q["sale_price"] = {"$ne": None}
+    if site:
+        q["site"] = site
     all_skus = [d["sku"] for d in conn.db["products"].find(q, {"sku": 1})]
     targets = dao.skus_to_refresh(all_skus, include_missed=include_missed)
     if limit:

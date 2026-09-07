@@ -116,37 +116,46 @@ def fx():
 
     for name, url, pick in (
         ("open.er-api", "https://open.er-api.com/v6/latest/USD",
-         lambda d: (d["rates"]["CNY"], d["rates"]["HKD"], d.get("time_last_update_utc", ""))),
-        ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=CNY,HKD",
-         lambda d: (d["rates"]["CNY"], d["rates"]["HKD"], d.get("date", ""))),
+         lambda d: (d["rates"]["CNY"], d["rates"]["HKD"], d["rates"]["KRW"],
+                    d.get("time_last_update_utc", ""))),
+        ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=CNY,HKD,KRW",
+         lambda d: (d["rates"]["CNY"], d["rates"]["HKD"], d["rates"]["KRW"],
+                    d.get("date", ""))),
     ):
         try:
             d = requests.get(url, timeout=12).json()
-            cny, hkd, ts = pick(d)
-            return {"source": name, "usd_cny": round(cny, 4),
-                    "usd_hkd": round(hkd, 4), "updated": ts, "live": True}
+            cny, hkd, krw, ts = pick(d)
+            return {"source": name, "usd_cny": round(cny, 4), "usd_hkd": round(hkd, 4),
+                    "usd_krw": round(krw, 2),
+                    "krw_cny": round(cny / krw, 6),   # 韩元 -> 人民币
+                    "updated": ts, "live": True}
         except Exception:
             continue
 
     cfg = get_pricing_config(load_config())["fx"]
-    return {"source": "config", "usd_cny": cfg["usd_cny"],
-            "usd_hkd": cfg["usd_hkd"], "updated": "", "live": False}
+    return {"source": "config", "usd_cny": cfg["usd_cny"], "usd_hkd": cfg["usd_hkd"],
+            "usd_krw": None, "krw_cny": cfg.get("krw_cny", 0.0052),
+            "updated": "", "live": False}
 
 
 @router.get("/raw", summary="尺码级原始数据（供前端自行试算）")
-def raw(min_sales: int = Query(0, ge=0), limit: int = Query(3000, ge=1, le=20000)):
+def raw(site: str = Query("us", description="us 美国站 | kr 韩国站"),
+        min_sales: int = Query(0, ge=0), limit: int = Query(8000, ge=1, le=30000)):
     """返回计算利润所需的原始字段，不做任何费用假设。
 
     前端拿到后可按用户自填的返现/运费/汇率即时重算，无需回服务端。
     """
     from app.core.config import load_config
     from app.core.pricing import get_pricing_config
+    from app.core.sizing import in_stock
 
     db = MongoConnection.from_environment(required=True).db
     dao = ArbitrageDAO(db)
     products = {d["sku"]: d for d in db["products"].find(
-        {}, {"sku": 1, "name": 1, "category": 1, "orig_price": 1, "sale_price": 1,
-             "url": 1, "is_sold_out": 1, "promo_code": 1, "promo_rate": 1})}
+        {"site": site},
+        {"sku": 1, "name": 1, "category": 1, "orig_price": 1, "sale_price": 1,
+         "url": 1, "is_sold_out": 1, "promo_code": 1, "promo_rate": 1,
+         "currency": 1, "available_sizes": 1})}
 
     rows = []
     for q in dao.quotes.find({}):
@@ -167,6 +176,9 @@ def raw(min_sales: int = Query(0, ge=0), limit: int = Query(3000, ge=1, le=20000
                 "sku": q["sku"], "size": s.get("size"),
                 "name": p.get("name"), "category": p.get("category"),
                 "url": p.get("url"), "is_sold_out": p.get("is_sold_out", False),
+                "site": site, "currency": p.get("currency", "USD"),
+                # 该尺码 Adidas 侧是否有货：True/False，拿不到尺码时为 None（未知）
+                "in_stock": in_stock(s.get("size"), p.get("available_sizes")),
                 "list_usd": p.get("orig_price"), "price_usd": usd,
                 "promo_code": p.get("promo_code"), "promo_rate": p.get("promo_rate"),
                 "dewu_price": price, "monthly_sales": s.get("globalSoldNum30"),
@@ -177,4 +189,4 @@ def raw(min_sales: int = Query(0, ge=0), limit: int = Query(3000, ge=1, le=20000
                 break
 
     fees = get_pricing_config(load_config())["sell_cn"]
-    return {"count": len(rows), "sell_cn_fees": fees, "items": rows}
+    return {"site": site, "count": len(rows), "sell_cn_fees": fees, "items": rows}

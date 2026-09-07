@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 DEFAULTS: Dict[str, Any] = {
-    "fx": {"usd_cny": 7.12, "usd_hkd": 7.80},
+    "fx": {"usd_cny": 7.12, "usd_hkd": 7.80, "krw_cny": 0.0052},
     "purchase": {"sales_tax": 0.0, "promo_rate": 1.0,
                  "cashback_bank": 0.0, "cashback_portal": 0.0},
     "sell_cn": {"tax_rate": 0.09, "tech_fee_rate": 0.05, "transfer_fee_rate": 0.01,
