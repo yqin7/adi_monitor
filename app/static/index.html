@@ -7,177 +7,301 @@
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --text:#1a1d21; --muted:#6b7280;
-    --line:#e5e7eb; --pos:#0f7b3e; --neg:#b42318; --accent:#111827;
+    --line:#e5e7eb; --pos:#0f7b3e; --neg:#b42318; --accent:#111827; --hl:#fff8e1;
   }
   @media (prefers-color-scheme: dark){
     :root{ --bg:#0f1115; --card:#171a20; --text:#e8eaed; --muted:#9aa1ab;
-           --line:#272b33; --pos:#4ade80; --neg:#f87171; --accent:#e8eaed; }
+           --line:#272b33; --pos:#4ade80; --neg:#f87171; --accent:#e8eaed; --hl:#2a2415; }
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);
        font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-  .wrap{max-width:1280px;margin:0 auto;padding:24px 16px 60px}
-  h1{font-size:20px;margin:0 0 4px}
-  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
-         gap:10px;margin-bottom:18px}
-  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
-  .stat .k{color:var(--muted);font-size:12px}
-  .stat .v{font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
-  .bar{background:var(--card);border:1px solid var(--line);border-radius:10px;
-       padding:12px 14px;display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin-bottom:14px}
+  .wrap{max-width:1400px;margin:0 auto;padding:22px 16px 70px}
+  h1{font-size:20px;margin:0 0 3px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;
+         padding:14px 16px;margin-bottom:14px}
+  .panel h2{font-size:13px;margin:0 0 11px;color:var(--muted);font-weight:600;
+            letter-spacing:.02em;text-transform:uppercase}
+  .grid{display:flex;flex-wrap:wrap;gap:13px;align-items:end}
   .f{display:flex;flex-direction:column;gap:4px}
-  .f label{font-size:12px;color:var(--muted)}
-  select,input{background:var(--bg);color:var(--text);border:1px solid var(--line);
-               border-radius:7px;padding:6px 9px;font-size:13px;min-width:110px}
+  .f label{font-size:12px;color:var(--muted);white-space:nowrap}
+  .f label.tip{cursor:help;position:relative;border-bottom:1px dotted var(--muted)}
+  .f label.tip::after{
+    content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 7px);
+    background:var(--accent);color:var(--bg);padding:5px 9px;border-radius:6px;
+    font-size:12px;white-space:nowrap;opacity:0;visibility:hidden;
+    transition:opacity .12s;pointer-events:none;z-index:5;
+    box-shadow:0 2px 8px rgba(0,0,0,.18)}
+  .f label.tip::before{
+    content:"";position:absolute;left:11px;bottom:calc(100% + 2px);
+    border:5px solid transparent;border-top-color:var(--accent);
+    opacity:0;visibility:hidden;transition:opacity .12s;z-index:5}
+  .f label.tip:hover::after,.f label.tip:hover::before{opacity:1;visibility:visible}
+  input,select{background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:7px;padding:6px 9px;font-size:13px;width:112px}
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   button{background:var(--accent);color:var(--bg);border:0;border-radius:7px;
-         padding:7px 16px;font-size:13px;font-weight:600;cursor:pointer}
+         padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer}
   button:hover{opacity:.88}
-  .tablewrap{background:var(--card);border:1px solid var(--line);
-             border-radius:10px;overflow-x:auto}
-  table{width:100%;border-collapse:collapse;min-width:1000px}
-  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);
-        white-space:nowrap}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+         gap:10px;margin-bottom:14px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .stat .k{color:var(--muted);font-size:12px}
+  .stat .v{font-size:19px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+  .tablewrap{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+  table{width:100%;border-collapse:collapse;min-width:1120px}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
   th{font-size:12px;color:var(--muted);font-weight:600;position:sticky;top:0;
-     background:var(--card);cursor:pointer;user-select:none}
-  th.sortable:hover{color:var(--text)}
-  th .arrow{opacity:.45;font-size:10px}
+     background:var(--card);cursor:pointer;user-select:none;z-index:1}
+  th.on{color:var(--text)}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   tbody tr:hover{background:rgba(127,127,127,.06)}
   .pos{color:var(--pos);font-weight:600}
   .neg{color:var(--neg)}
-  .name{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  a{color:inherit}
-  .sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-  .empty{padding:44px;text-align:center;color:var(--muted)}
-  .pager{display:flex;gap:10px;align-items:center;justify-content:center;
-         margin-top:16px;color:var(--muted);font-size:13px}
+  .name{max-width:270px;overflow:hidden;text-overflow:ellipsis}
+  .sku{font-family:ui-monospace,Menlo,monospace;font-size:12px}
   .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;
        background:rgba(127,127,127,.15);color:var(--muted)}
+  .code{background:var(--hl);color:var(--text);padding:1px 5px;border-radius:4px;
+        font-size:11px;font-family:ui-monospace,Menlo,monospace}
+  input.ov{width:66px;padding:3px 6px;font-size:12px;background:transparent;
+           border:1px dashed var(--line)}
+  input.ov:focus{background:var(--bg);border-style:solid}
+  input.ov.set{background:var(--hl);border-style:solid;font-weight:600}
+  .empty{padding:44px;text-align:center;color:var(--muted)}
+  .fx{font-size:12px;color:var(--muted);margin-left:auto;text-align:right}
+  a{color:inherit}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Adidas × 得物 比价</h1>
-  <div class="sub">按利润、利润率或销量排序，找出值得倒卖的商品</div>
+  <div class="sub">填入你的返利与运费，回车即刻重算利润</div>
+
+  <div class="panel">
+    <h2>成本参数</h2>
+    <div class="grid">
+      <div class="f"><label class="tip" data-tip="留空则各商品用自带促销码折扣">全局折扣</label>
+        <input id="promo" type="number" step="0.01" min="0" max="1" placeholder="如 0.7"></div>
+      <div class="f"><label>Rakuten 返利 %</label><input id="rakuten" type="number" step="0.1" placeholder="0"></div>
+      <div class="f"><label class="tip" data-tip="单笔返利上限 $50">RetailMeNot 返利 %</label>
+        <input id="rmn" type="number" step="0.1" value="0"></div>
+      <div class="f"><label>银行卡返利 %</label><input id="bank" type="number" step="0.1" value="3"></div>
+      <div class="f"><label>运费 ¥/件</label><input id="ship" type="number" step="0.1" value="0"></div>
+      <div class="f"><label>销售税 %</label><input id="tax" type="number" step="0.1" value="0"></div>
+      <div class="f"><label>汇率 USD→CNY</label><input id="fx" type="number" step="0.0001"></div>
+      <div class="f"><label>&nbsp;</label><button id="apply">确认重算</button></div>
+      <div class="fx" id="fxInfo">汇率加载中…</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>筛选与排序</h2>
+    <div class="grid">
+      <div class="f"><label>排序</label>
+        <select id="sortBy"><option value="profit">净利</option><option value="roi">利润率 ROI</option>
+          <option value="monthly_sales">30天销量</option></select></div>
+      <div class="f"><label>最低月销</label><input id="minSales" type="number" value="20"></div>
+      <div class="f"><label class="tip" data-tip="留空则不过滤，负利润也显示">最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
+      <div class="f"><label class="tip" data-tip="留空则不过滤">最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
+      <div class="f"><label>&nbsp;</label><button class="ghost" id="reset">重置</button></div>
+      <div class="f"><label>&nbsp;</label><button class="ghost" id="clearOv">清除单品自定义</button></div>
+      <div class="fx" id="ovInfo"></div>
+    </div>
+  </div>
 
   <div class="stats" id="stats"></div>
-
-  <div class="bar">
-    <div class="f"><label>排序字段</label>
-      <select id="sortBy">
-        <option value="profit">净利</option>
-        <option value="roi">利润率 ROI</option>
-        <option value="monthly_sales">30天销量</option>
-        <option value="dewu_price">得物价</option>
-        <option value="cost_local">成本</option>
-      </select></div>
-    <div class="f"><label>方向</label>
-      <select id="order"><option value="desc">从高到低</option><option value="asc">从低到高</option></select></div>
-    <div class="f"><label>最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
-    <div class="f"><label>最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
-    <div class="f"><label>最低月销</label><input id="minSales" type="number" placeholder="不限"></div>
-    <div class="f"><label>每页</label>
-      <select id="limit"><option>50</option><option>100</option><option>200</option></select></div>
-    <div class="f"><label>&nbsp;</label><button id="go">查询</button></div>
-  </div>
 
   <div class="tablewrap">
     <table>
       <thead><tr>
-        <th class="sortable" data-k="">货号</th>
-        <th>名称</th>
-        <th>尺码</th>
-        <th class="sortable" data-k="cost_local">成本 ¥ <span class="arrow"></span></th>
-        <th class="sortable" data-k="dewu_price">得物价 ¥ <span class="arrow"></span></th>
-        <th>到手 ¥</th>
-        <th class="sortable" data-k="profit">净利 ¥ <span class="arrow"></span></th>
-        <th class="sortable" data-k="roi">ROI <span class="arrow"></span></th>
-        <th class="sortable" data-k="monthly_sales">30天销量 <span class="arrow"></span></th>
-        <th>环比</th>
+        <th data-k="sku">货号</th><th>名称</th><th>尺码</th><th>促销码</th>
+        <th title="留空则用商品自带折扣">折扣<br><span style="font-weight:400;opacity:.6">如 0.7</span></th>
+        <th title="留空则用上方统一运费">运费 ¥</th>
+        <th data-k="price_usd" class="num">Adidas 售价 $</th>
+        <th data-k="net_usd" class="num" title="美元货款实付，不含运费">货款 $</th>
+        <th data-k="cost_cny" class="num" title="货款折人民币 + 运费">总成本 ¥</th>
+        <th data-k="dewu_price" class="num">得物价 ¥</th>
+        <th data-k="payout" class="num">得物到手 ¥</th>
+        <th data-k="profit" class="num">净利 ¥</th>
+        <th data-k="roi" class="num">ROI</th>
+        <th data-k="monthly_sales" class="num">30天销量</th>
+        <th class="num">环比</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
-    <div class="empty" id="empty" hidden>暂无数据 —— 先执行 <code>POST /arbitrage/refresh</code> 拉取报价，再 <code>POST /arbitrage/compute</code></div>
-  </div>
-
-  <div class="pager">
-    <button id="prev">上一页</button>
-    <span id="pageInfo">—</span>
-    <button id="next">下一页</button>
+    <div class="empty" id="empty" hidden>暂无数据</div>
   </div>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
-let offset = 0, total = 0;
+let RAW = [], FEES = null, sortBy = 'profit', order = 'desc';
+/* 单品级覆盖：{ sku: {promo: 0.7, ship: 3.5} }，存 localStorage，刷新不丢 */
+let OVERRIDES = {};
+try { OVERRIDES = JSON.parse(localStorage.getItem('dewu_overrides') || '{}'); } catch (e) {}
+const saveOv = () => { try { localStorage.setItem('dewu_overrides', JSON.stringify(OVERRIDES)); } catch (e) {} };
 
-const fmt = (v, d=0) => v == null ? '—' :
-  Number(v).toLocaleString('zh-CN', {minimumFractionDigits:d, maximumFractionDigits:d});
+const num = id => Number($('#' + id).value) || 0;
+/* 空字符串视为「不限」，返回 null；填了才参与过滤 */
+const lim = id => { const v = $('#' + id).value.trim(); return v === '' ? null : Number(v); };
+const fmt = (v, d = 0) => v == null || isNaN(v) ? '—'
+  : Number(v).toLocaleString('zh-CN', {minimumFractionDigits: d, maximumFractionDigits: d});
 
-async function loadStats(){
-  try{
-    const s = await (await fetch('/arbitrage/stats')).json();
-    $('#stats').innerHTML = [
-      ['机会数', s.opportunities], ['已获报价', s.quotes],
-      ['得物命中', s.matched], ['未命中', s.missed],
-    ].map(([k,v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`).join('');
-  }catch(e){ $('#stats').innerHTML = ''; }
+/* 单行试算：返利按各自比例相加，RetailMeNot 部分单笔封顶 $50 */
+function calc(r) {
+  const ov = OVERRIDES[r.sku] || {};
+  // 折扣优先级：单品自定义 > 全局折扣 > 商品自带促销码 > 原价
+  const gp = $('#promo').value.trim();
+  const promo = ov.promo != null ? ov.promo
+              : (gp !== '' ? Number(gp) : (r.promo_rate ?? 1));
+  const afterPromo = r.price_usd * promo;
+
+  const cbRakuten = afterPromo * num('rakuten') / 100;
+  const cbRmn     = Math.min(afterPromo * num('rmn') / 100, 50);   // 上限 $50
+  const cbBank    = afterPromo * num('bank') / 100;
+  const cashback  = cbRakuten + cbRmn + cbBank;
+
+  const tax = afterPromo * num('tax') / 100;
+  const netUsd = afterPromo - cashback + tax;          // 美元侧：货款实付
+  // 运费以人民币计，单品自定义 > 全局统一，不经汇率换算
+  const shipCny = ov.ship != null ? ov.ship : num('ship');
+  const costCny = netUsd * num('fx') + shipCny;        // 到岸总成本
+
+  const f = FEES || {tax_rate:0.09, tech_fee_rate:0.05, transfer_fee_rate:0.01,
+                     after_sale_rate:0.025, operate_fee:38, postage_subsidy:10};
+  const base = r.dewu_price * (1 + f.tax_rate);
+  const payout = base * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)
+                 - f.operate_fee - f.postage_subsidy;
+
+  const profit = payout - costCny;
+  return {...r, after_promo: afterPromo, cashback, net_usd: netUsd, ship_cny: shipCny,
+          cost_cny: costCny, payout, profit, roi: costCny ? profit / costCny : 0};
 }
 
-function params(){
-  const p = new URLSearchParams();
-  p.set('sort_by', $('#sortBy').value);
-  p.set('order', $('#order').value);
-  p.set('limit', $('#limit').value);
-  p.set('offset', offset);
-  const mp = $('#minProfit').value, mr = $('#minRoi').value, ms = $('#minSales').value;
-  if(mp) p.set('min_profit', mp);
-  if(mr) p.set('min_roi', Number(mr)/100);
-  if(ms) p.set('min_sales', ms);
-  return p;
+/* 该商品当前生效的折扣（不含单品覆盖），用于输入框占位提示 */
+function effPromo(r) {
+  const gp = $('#promo').value.trim();
+  return gp !== '' ? Number(gp) : (r.promo_rate ?? 1);
 }
 
-async function load(){
-  const d = await (await fetch('/arbitrage?' + params())).json();
-  total = d.total;
-  const rows = d.items || [];
+function render() {
+  const minSales = num('minSales');
+  const minProfit = lim('minProfit');
+  const minRoiPct = lim('minRoi');
+  let rows = RAW.map(calc).filter(r =>
+    (r.monthly_sales || 0) >= minSales
+    && (minProfit === null || r.profit >= minProfit)
+    && (minRoiPct === null || r.roi >= minRoiPct / 100));
+
+  const dir = order === 'desc' ? -1 : 1;
+  rows.sort((a, b) => {
+    const x = a[sortBy], y = b[sortBy];
+    if (typeof x === 'string') return dir * x.localeCompare(y);
+    return dir * ((x ?? -Infinity) - (y ?? -Infinity));
+  });
+
+  const pos = rows.filter(r => r.profit > 0);
+  const best = rows.length ? Math.max(...rows.map(r => r.profit)) : 0;
+  $('#stats').innerHTML = [
+    ['符合条件', rows.length], ['其中净利为正', pos.length],
+    ['最高净利 ¥', Math.round(best)],
+    ['数据总量', RAW.length],
+  ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`).join('');
+
   $('#empty').hidden = rows.length > 0;
-  $('#rows').innerHTML = rows.map(r => {
+  $('#rows').innerHTML = rows.slice(0, 500).map(r => {
     const cls = r.profit > 0 ? 'pos' : 'neg';
-    const mom = r.sales_mom == null ? '—' :
-      (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom*100).toFixed(1) + '%';
+    const mom = r.sales_mom == null ? '—'
+      : (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom * 100).toFixed(1) + '%';
     const link = r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${r.sku}</a>` : r.sku;
+    const ov = OVERRIDES[r.sku] || {};
+    const code = r.promo_code
+      ? `<span class="code">${r.promo_code} ${Math.round((1 - r.promo_rate) * 100)}%off</span>`
+      : '<span class="tag">无</span>';
     return `<tr>
       <td class="sku">${link}</td>
-      <td class="name" title="${(r.name||'').replace(/"/g,'&quot;')}">${r.name || '—'}</td>
+      <td class="name" title="${(r.name || '').replace(/"/g, '&quot;')}">${r.name || '—'}</td>
       <td><span class="tag">${r.size ?? '—'}</span></td>
-      <td class="num">${fmt(r.cost_local)}</td>
+      <td>${code}</td>
+      <td><input class="ov" data-f="promo" data-sku="${r.sku}" type="number" step="0.01"
+                 min="0" max="1" value="${ov.promo ?? ''}" placeholder="${effPromo(r).toFixed(2)}"></td>
+      <td><input class="ov" data-f="ship" data-sku="${r.sku}" type="number" step="0.1"
+                 min="0" value="${ov.ship ?? ''}" placeholder="${num('ship')}"></td>
+      <td class="num">${fmt(r.price_usd, 2)}</td>
+      <td class="num">${fmt(r.net_usd, 2)}</td>
+      <td class="num">${fmt(r.cost_cny)}</td>
       <td class="num">${fmt(r.dewu_price)}</td>
       <td class="num">${fmt(r.payout)}</td>
-      <td class="num ${cls}">${r.profit>0?'+':''}${fmt(r.profit)}</td>
-      <td class="num ${cls}">${(r.roi*100).toFixed(0)}%</td>
+      <td class="num ${cls}">${r.profit > 0 ? '+' : ''}${fmt(r.profit)}</td>
+      <td class="num ${cls}">${(r.roi * 100).toFixed(0)}%</td>
       <td class="num">${fmt(r.monthly_sales)}</td>
       <td class="num">${mom}</td>
     </tr>`;
   }).join('');
-  const from = total ? offset+1 : 0;
-  $('#pageInfo').textContent = `${from}–${Math.min(offset+rows.length, total)} / 共 ${fmt(total)} 条`;
-  $('#prev').disabled = offset <= 0;
-  $('#next').disabled = offset + rows.length >= total;
+
+  document.querySelectorAll('th[data-k]').forEach(th =>
+    th.classList.toggle('on', th.dataset.k === sortBy));
+  document.querySelectorAll('input.ov').forEach(el =>
+    el.classList.toggle('set', el.value.trim() !== ''));
+  const n = Object.keys(OVERRIDES).length;
+  $('#ovInfo').textContent = n ? `已自定义 ${n} 个商品` : '';
 }
 
-$('#go').onclick = () => { offset = 0; load(); };
-$('#prev').onclick = () => { offset = Math.max(0, offset - Number($('#limit').value)); load(); };
-$('#next').onclick = () => { offset += Number($('#limit').value); load(); };
-document.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
-  const k = th.dataset.k; if(!k) return;
-  if($('#sortBy').value === k) $('#order').value = $('#order').value === 'desc' ? 'asc' : 'desc';
-  else $('#sortBy').value = k;
-  offset = 0; load();
+async function loadFx() {
+  try {
+    const d = await (await fetch('/arbitrage/fx')).json();
+    $('#fx').value = d.usd_cny;
+    $('#fxInfo').innerHTML = d.live
+      ? `实时汇率 ${d.usd_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
+      : `未取到实时汇率，使用配置值 ${d.usd_cny}`;
+  } catch (e) { $('#fx').value = 7.12; $('#fxInfo').textContent = '汇率获取失败，请手填'; }
+}
+
+async function loadData() {
+  const d = await (await fetch('/arbitrage/raw')).json();
+  RAW = d.items || []; FEES = d.sell_cn_fees;
+  render();
+}
+
+/* 单品覆盖：change(失焦或回车) 时写入并重算 */
+$('#rows').addEventListener('change', e => {
+  const el = e.target;
+  if (!el.classList.contains('ov')) return;
+  const sku = el.dataset.sku, field = el.dataset.f;
+  const raw = el.value.trim();
+  OVERRIDES[sku] = OVERRIDES[sku] || {};
+  if (raw === '') delete OVERRIDES[sku][field];
+  else OVERRIDES[sku][field] = Number(raw);
+  if (!Object.keys(OVERRIDES[sku]).length) delete OVERRIDES[sku];
+  saveOv(); render();
+});
+$('#rows').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.classList.contains('ov')) e.target.blur();
 });
 
-loadStats(); load();
+$('#apply').onclick = render;
+$('#reset').onclick = () => {
+  $('#promo').value = '';
+  ['rakuten','rmn','bank','ship','tax'].forEach((k, i) => $('#' + k).value = ['',0,3,0,0][i]);
+  $('#minSales').value = 20; $('#minProfit').value = ''; $('#minRoi').value = '';
+  loadFx().then(render);
+};
+document.querySelectorAll('input').forEach(el =>
+  el.addEventListener('keydown', e => { if (e.key === 'Enter') render(); }));
+$('#clearOv').onclick = () => { OVERRIDES = {}; saveOv(); render(); };
+$('#sortBy').onchange = () => { sortBy = $('#sortBy').value; render(); };
+document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
+  const k = th.dataset.k;
+  if (sortBy === k) order = order === 'desc' ? 'asc' : 'desc';
+  else { sortBy = k; order = 'desc'; }
+  $('#sortBy').value = ['profit','roi','monthly_sales'].includes(k) ? k : $('#sortBy').value;
+  render();
+});
+
+loadFx().then(loadData);
 </script>
 </body>
 </html>
