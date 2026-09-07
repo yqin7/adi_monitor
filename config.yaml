@@ -47,3 +47,41 @@ notification:
   scan_interval_minutes: 30          # 扫描间隔
   duplicate_notification_hours: 2    # 相同货2小时内不重复通知
   concurrent_workers: 24             # 并发扫描线程数
+
+# ── 比价定价模型 ──────────────────────────────────────────────────────────────
+pricing:
+  fx:
+    usd_cny: 7.12               # 美元 -> 人民币
+    usd_hkd: 7.80               # 美元 -> 港币
+
+  purchase:                     # 采购侧（Adidas 美国）
+    sales_tax: 0.0              # 销售税，免税州填 0
+    promo_rate: 1.0             # 兜底折扣（商品无 badge 促销码时用）。1.0 = 无码原价
+                                # 实际折扣优先取商品 badge 里的码，如 "Extra 30% Off with CODE: EXTRA"
+    cashback_bank: 0.02         # 银行卡返现，可与返利门户叠加
+    cashback_portal: 0.10       # 返利门户返现（Rakuten / RetailMeNot 互斥，填最高的那个）
+
+  sell_cn:                      # 国内卖出
+    tax_rate: 0.09              # 电商税，海外查得价 × (1 + tax_rate) = 国内成交基数
+    tech_fee_rate: 0.05         # 技术服务费
+    transfer_fee_rate: 0.01     # 银行转账费
+    after_sale_rate: 0.025      # 售后无忧
+    operate_fee: 38             # 操作费（元）
+    postage_subsidy: 10         # 消费者邮费补贴（元）
+
+  sell_hk:                      # 香港卖出（港币）
+    tech_fee_rate: 0.05
+    tech_fee_min: 18            # 技术服务费下限
+    transfer_fee_rate: 0.01
+    threshold: 350              # 售价分档阈值
+    operate_fee_low: 44         # 售价 < threshold
+    operate_fee_high: 62        # 售价 >= threshold
+
+  shipping:
+    enabled: false              # 运费暂不计入，之后启用
+    usd_per_item: 0.0
+
+  filter:
+    min_monthly_sales: 20       # 尺码级流动性门槛：30天销量低于此值不推荐
+    min_profit_cny: 50          # 最低净利
+    min_roi: 0.15               # 最低 ROI

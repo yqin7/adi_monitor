@@ -13,7 +13,11 @@ from app.services.scan_service import ScanService
 from app.services.watch_service import WatchService
 from app.services.notification_service import NotificationService
 from app.services.job_service import JobService
-from app.api import system, products, scan, watch, notifications, config_router
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.core.paths import PROJECT_ROOT
+from app.api import system, products, scan, watch, notifications, config_router, arbitrage
 
 # ===== 日志配置 =====
 logging.basicConfig(
@@ -36,6 +40,16 @@ app.include_router(scan.router)
 app.include_router(watch.router)
 app.include_router(notifications.router)
 app.include_router(config_router.router)
+app.include_router(arbitrage.router)
+
+_STATIC = PROJECT_ROOT / "app" / "static"
+app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
+
+
+@app.get("/ui", include_in_schema=False)
+def ui():
+    """比价结果网页"""
+    return FileResponse(str(_STATIC / "index.html"))
 
 
 @app.on_event("startup")

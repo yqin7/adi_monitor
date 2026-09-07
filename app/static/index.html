@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adidas × 得物 比价</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --text:#1a1d21; --muted:#6b7280;
+    --line:#e5e7eb; --pos:#0f7b3e; --neg:#b42318; --accent:#111827;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1115; --card:#171a20; --text:#e8eaed; --muted:#9aa1ab;
+           --line:#272b33; --pos:#4ade80; --neg:#f87171; --accent:#e8eaed; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:1280px;margin:0 auto;padding:24px 16px 60px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:20px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+         gap:10px;margin-bottom:18px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .stat .k{color:var(--muted);font-size:12px}
+  .stat .v{font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+  .bar{background:var(--card);border:1px solid var(--line);border-radius:10px;
+       padding:12px 14px;display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin-bottom:14px}
+  .f{display:flex;flex-direction:column;gap:4px}
+  .f label{font-size:12px;color:var(--muted)}
+  select,input{background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:7px;padding:6px 9px;font-size:13px;min-width:110px}
+  button{background:var(--accent);color:var(--bg);border:0;border-radius:7px;
+         padding:7px 16px;font-size:13px;font-weight:600;cursor:pointer}
+  button:hover{opacity:.88}
+  .tablewrap{background:var(--card);border:1px solid var(--line);
+             border-radius:10px;overflow-x:auto}
+  table{width:100%;border-collapse:collapse;min-width:1000px}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);
+        white-space:nowrap}
+  th{font-size:12px;color:var(--muted);font-weight:600;position:sticky;top:0;
+     background:var(--card);cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--text)}
+  th .arrow{opacity:.45;font-size:10px}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:rgba(127,127,127,.06)}
+  .pos{color:var(--pos);font-weight:600}
+  .neg{color:var(--neg)}
+  .name{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  a{color:inherit}
+  .sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .empty{padding:44px;text-align:center;color:var(--muted)}
+  .pager{display:flex;gap:10px;align-items:center;justify-content:center;
+         margin-top:16px;color:var(--muted);font-size:13px}
+  .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;
+       background:rgba(127,127,127,.15);color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Adidas × 得物 比价</h1>
+  <div class="sub">按利润、利润率或销量排序，找出值得倒卖的商品</div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="bar">
+    <div class="f"><label>排序字段</label>
+      <select id="sortBy">
+        <option value="profit">净利</option>
+        <option value="roi">利润率 ROI</option>
+        <option value="monthly_sales">30天销量</option>
+        <option value="dewu_price">得物价</option>
+        <option value="cost_local">成本</option>
+      </select></div>
+    <div class="f"><label>方向</label>
+      <select id="order"><option value="desc">从高到低</option><option value="asc">从低到高</option></select></div>
+    <div class="f"><label>最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
+    <div class="f"><label>最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
+    <div class="f"><label>最低月销</label><input id="minSales" type="number" placeholder="不限"></div>
+    <div class="f"><label>每页</label>
+      <select id="limit"><option>50</option><option>100</option><option>200</option></select></div>
+    <div class="f"><label>&nbsp;</label><button id="go">查询</button></div>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th class="sortable" data-k="">货号</th>
+        <th>名称</th>
+        <th>尺码</th>
+        <th class="sortable" data-k="cost_local">成本 ¥ <span class="arrow"></span></th>
+        <th class="sortable" data-k="dewu_price">得物价 ¥ <span class="arrow"></span></th>
+        <th>到手 ¥</th>
+        <th class="sortable" data-k="profit">净利 ¥ <span class="arrow"></span></th>
+        <th class="sortable" data-k="roi">ROI <span class="arrow"></span></th>
+        <th class="sortable" data-k="monthly_sales">30天销量 <span class="arrow"></span></th>
+        <th>环比</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>暂无数据 —— 先执行 <code>POST /arbitrage/refresh</code> 拉取报价，再 <code>POST /arbitrage/compute</code></div>
+  </div>
+
+  <div class="pager">
+    <button id="prev">上一页</button>
+    <span id="pageInfo">—</span>
+    <button id="next">下一页</button>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let offset = 0, total = 0;
+
+const fmt = (v, d=0) => v == null ? '—' :
+  Number(v).toLocaleString('zh-CN', {minimumFractionDigits:d, maximumFractionDigits:d});
+
+async function loadStats(){
+  try{
+    const s = await (await fetch('/arbitrage/stats')).json();
+    $('#stats').innerHTML = [
+      ['机会数', s.opportunities], ['已获报价', s.quotes],
+      ['得物命中', s.matched], ['未命中', s.missed],
+    ].map(([k,v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`).join('');
+  }catch(e){ $('#stats').innerHTML = ''; }
+}
+
+function params(){
+  const p = new URLSearchParams();
+  p.set('sort_by', $('#sortBy').value);
+  p.set('order', $('#order').value);
+  p.set('limit', $('#limit').value);
+  p.set('offset', offset);
+  const mp = $('#minProfit').value, mr = $('#minRoi').value, ms = $('#minSales').value;
+  if(mp) p.set('min_profit', mp);
+  if(mr) p.set('min_roi', Number(mr)/100);
+  if(ms) p.set('min_sales', ms);
+  return p;
+}
+
+async function load(){
+  const d = await (await fetch('/arbitrage?' + params())).json();
+  total = d.total;
+  const rows = d.items || [];
+  $('#empty').hidden = rows.length > 0;
+  $('#rows').innerHTML = rows.map(r => {
+    const cls = r.profit > 0 ? 'pos' : 'neg';
+    const mom = r.sales_mom == null ? '—' :
+      (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom*100).toFixed(1) + '%';
+    const link = r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${r.sku}</a>` : r.sku;
+    return `<tr>
+      <td class="sku">${link}</td>
+      <td class="name" title="${(r.name||'').replace(/"/g,'&quot;')}">${r.name || '—'}</td>
+      <td><span class="tag">${r.size ?? '—'}</span></td>
+      <td class="num">${fmt(r.cost_local)}</td>
+      <td class="num">${fmt(r.dewu_price)}</td>
+      <td class="num">${fmt(r.payout)}</td>
+      <td class="num ${cls}">${r.profit>0?'+':''}${fmt(r.profit)}</td>
+      <td class="num ${cls}">${(r.roi*100).toFixed(0)}%</td>
+      <td class="num">${fmt(r.monthly_sales)}</td>
+      <td class="num">${mom}</td>
+    </tr>`;
+  }).join('');
+  const from = total ? offset+1 : 0;
+  $('#pageInfo').textContent = `${from}–${Math.min(offset+rows.length, total)} / 共 ${fmt(total)} 条`;
+  $('#prev').disabled = offset <= 0;
+  $('#next').disabled = offset + rows.length >= total;
+}
+
+$('#go').onclick = () => { offset = 0; load(); };
+$('#prev').onclick = () => { offset = Math.max(0, offset - Number($('#limit').value)); load(); };
+$('#next').onclick = () => { offset += Number($('#limit').value); load(); };
+document.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
+  const k = th.dataset.k; if(!k) return;
+  if($('#sortBy').value === k) $('#order').value = $('#order').value === 'desc' ? 'asc' : 'desc';
+  else $('#sortBy').value = k;
+  offset = 0; load();
+});
+
+loadStats(); load();
+</script>
+</body>
+</html>

@@ -207,6 +207,83 @@ def fetch_page(session: cf_requests.Session, build_id: str,
     return None
 
 # ── 解析 PLP 商品字段 ──────────────────────────────────────────────────────────
+# ── 促销 badge 解析 ────────────────────────────────────────────────────────────
+# Adidas 把活动逐商品标在 badges 上，措辞会变，例如：
+#   "Extra 30% Off with CODE: EXTRA"   "30% Off Full Price"
+#   "Save 25% with code SUMMER"        "Up to 40% Off"      "$20 Off"
+# 所以不匹配整句，而是分别抽「折扣幅度」「促销码」「是否为不确定的上限表述」。
+
+# 百分比：兼容 "30% off" / "save 25%" / "25% discount" / 纯 "30%"
+PCT_RE = re.compile(r"(\d{1,2})\s*%(?:\s*(?:off|discount))?", re.I)
+AMOUNT_RE = re.compile(r"\$\s*(\d+(?:\.\d+)?)\s*off", re.I)
+CODE_RE = re.compile(r"(?:with\s+)?code\s*[:\s]\s*([A-Z0-9][A-Z0-9_-]{2,19})\b", re.I)
+UPTO_RE = re.compile(r"\bup\s+to\b", re.I)
+# 非促销类 badge，出现这些词就不当作折扣
+NON_PROMO = re.compile(r"best\s*seller|new\b|award|recycled|rarely\s+on\s+sale|"
+                       r"members?\b|coming\s+soon|sold\s+out|limited", re.I)
+# 看起来像促销但没解析出幅度的，标记出来供人工复核
+PROMO_HINT = re.compile(r"%|off\b|sale|save|deal|discount|code", re.I)
+
+
+def parse_badges(badges: list | None) -> dict:
+    """通用促销解析。返回：
+
+        badges           原始文案列表（永远保留，措辞变了也能事后追溯）
+        promo_rate       折扣系数，30% off -> 0.70；无折扣为 None
+        promo_code       促销码；自动折扣（无需码）为 None
+        promo_text       命中的原文
+        promo_amount_off 固定金额减免（美元），如 "$20 Off"
+        promo_needs_code 是否需要输码
+        promo_uncertain  是 "Up to X% off" 这类上限表述（不保证，成本不按它算）
+        promo_unparsed   疑似促销但没解析出幅度的文案，用于发现新措辞
+    """
+    texts = [b.get("text", "").strip() for b in (badges or []) if b.get("text", "").strip()]
+
+    best_rate = None
+    best = {"promo_code": None, "promo_text": None, "promo_amount_off": None,
+            "promo_needs_code": False, "promo_uncertain": False}
+    unparsed: list[str] = []
+
+    for t in texts:
+        if NON_PROMO.search(t) and not PCT_RE.search(t) and not AMOUNT_RE.search(t):
+            continue
+
+        pct = PCT_RE.search(t)
+        amt = AMOUNT_RE.search(t)
+        if not pct and not amt:
+            # 看着像促销却抽不出幅度 —— 大概率是新措辞，记下来供复核
+            if PROMO_HINT.search(t):
+                unparsed.append(t)
+            continue
+
+        code_m = CODE_RE.search(t)
+        uncertain = bool(UPTO_RE.search(t))
+        rate = round(1 - int(pct.group(1)) / 100, 4) if pct else None
+
+        # "Up to X%" 不保证，不参与成本计算，仅记录
+        if uncertain:
+            if best["promo_text"] is None:
+                best.update({"promo_text": t, "promo_uncertain": True,
+                             "promo_code": code_m.group(1).upper() if code_m else None,
+                             "promo_needs_code": bool(code_m)})
+            continue
+
+        # 取折扣最狠的一条
+        if rate is not None and (best_rate is None or rate < best_rate):
+            best_rate = rate
+            best.update({"promo_code": code_m.group(1).upper() if code_m else None,
+                         "promo_text": t, "promo_needs_code": bool(code_m),
+                         "promo_uncertain": False,
+                         "promo_amount_off": float(amt.group(1)) if amt else None})
+        elif amt and best_rate is None:
+            best.update({"promo_amount_off": float(amt.group(1)),
+                         "promo_code": code_m.group(1).upper() if code_m else None,
+                         "promo_text": t, "promo_needs_code": bool(code_m)})
+
+    return {"badges": texts, "promo_rate": best_rate,
+            "promo_unparsed": unparsed or None, **best}
+
+
 def parse_product(p: dict, category: str) -> dict:
     prices = p.get("priceData", {}).get("prices", [])
     sale_price = orig_price = discount_pct = None
@@ -227,6 +304,7 @@ def parse_product(p: dict, category: str) -> dict:
         "orig_price":        orig_price,
         "discount_pct":      discount_pct,
         "is_sold_out":       p.get("priceData", {}).get("isSoldOut", False),
+        **parse_badges(p.get("badges")),
         "colour_variations": p.get("colourVariations", []),
         "rating":            p.get("rating"),
         "rating_count":      p.get("ratingCount"),
