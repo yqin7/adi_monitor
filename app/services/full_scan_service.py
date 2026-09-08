@@ -590,12 +590,14 @@ def run_full_scan(
     conn = MongoConnection.from_environment(required=True)
     try:
         product_dao = ProductDAO(conn.db)
-        product_dao.upsert_products(
+        stat = product_dao.upsert_products(
             deduped,
             source_file=batch_id,
             include_sizes=False,
             record_price_history=True,
         )
+        new_skus = stat["new_skus"]
+        _report("new", f"新上架 {stat['new_count']} 个 SKU")
 
         if include_sizes:
             _report("sizes", "补充尺码库存 ...")
@@ -626,6 +628,8 @@ def run_full_scan(
         "sold_out": len(sold_out),
         "price_range": [min(prices), max(prices)] if prices else None,
         "include_sizes": include_sizes,
+        "new_count": len(new_skus),
+        "new_skus": new_skus,
     }
     _report("done", f"完成！共 {len(deduped)} 个唯一 SKU，批次号: {batch_id}")
     return summary

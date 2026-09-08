@@ -166,8 +166,10 @@ def run_site_scan(site: str, category: str | None = None,
     batch_id = f"{site}_price_{ts}"
     conn = MongoConnection.from_environment(required=True)
     try:
-        ProductDAO(conn.db).upsert_products(deduped, source_file=batch_id,
-                                            include_sizes=False, record_price_history=True)
+        stat = ProductDAO(conn.db).upsert_products(
+            deduped, source_file=batch_id,
+            include_sizes=False, record_price_history=True)
+        report(f"[{label_cn}] 新上架 {stat['new_count']} 个 SKU")
         # 记录尺码快照，供补货/断码检测
         from app.dao.size_history_dao import SizeHistoryDAO
         sizes_map = {x["sku"]: x.get("available_sizes") or []
@@ -185,6 +187,7 @@ def run_site_scan(site: str, category: str | None = None,
            f"补货 {len(diff['new_in_stock'])} 个，断码 {len(diff['went_out_of_stock'])} 个")
     return {"site": site, "total": len(deduped), "discounted": discounted,
             "batch_id": batch_id,
+            "new_count": stat["new_count"], "new_skus": stat["new_skus"],
             "restock": diff["new_in_stock"], "out_of_stock": diff["went_out_of_stock"]}
 
 

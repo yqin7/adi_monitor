@@ -114,6 +114,10 @@ async def startup():
         state.job_service = JobService()
         logger.info(f"扫描服务初始化成功（{concurrent_workers} 个线程）")
 
+        # 定时调度（默认关闭，SCHEDULER_ENABLED=1 开启）
+        from app.services import scheduler
+        scheduler.start()
+
     except Exception as e:
         logger.error(f"启动失败: {e}")
         raise
@@ -122,6 +126,12 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     """应用关闭清理"""
+    try:
+        from app.services import scheduler
+        scheduler.shutdown()
+    except Exception as e:
+        logger.error(f"停止定时调度失败: {e}")
+
     if state.mongo_conn:
         try:
             state.mongo_conn.close()

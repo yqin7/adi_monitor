@@ -63,6 +63,13 @@
           background:var(--bg);border:1px solid var(--line);border-radius:8px;
           font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;
           white-space:pre-wrap;word-break:break-all;color:var(--muted)}
+  .np{max-height:300px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+  .np table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .np th,.np td{padding:6px 9px;border-bottom:1px solid var(--line);text-align:left;
+                white-space:nowrap;color:var(--text)}
+  .np th{position:sticky;top:0;background:var(--card);color:var(--muted);font-weight:600}
+  .np td.nm{white-space:normal;max-width:340px;color:var(--muted)}
+  .np a{color:var(--text)}
   .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
 </style>
 </head>
@@ -94,6 +101,23 @@
   <div class="panel">
     <h2>任务</h2>
     <div class="jobs" id="jobs">加载中…</div>
+  </div>
+
+  <div class="panel">
+    <h2>定时调度</h2>
+    <div id="sched" class="hint" style="margin-top:0">加载中…</div>
+  </div>
+
+  <div class="panel">
+    <h2>最近新品</h2>
+    <div class="bar">
+      <select id="npDays" style="width:110px">
+        <option value="1">最近 1 天</option><option value="3">最近 3 天</option>
+        <option value="7" selected>最近 7 天</option><option value="30">最近 30 天</option>
+      </select>
+      <span class="jobinfo" id="npInfo"></span>
+    </div>
+    <div id="npList" class="hint" style="margin-top:0">加载中…</div>
   </div>
 
   <div class="panel">
@@ -255,7 +279,57 @@ function startPolling() {
 $('#jobCancel').onclick = () => fetch('/jobs/cancel', {method: 'POST'});
 $('#logClear').onclick = () => { $('#jobLog').textContent = ''; };
 
+/* ── 定时调度状态 ── */
+async function loadSchedule() {
+  try {
+    const d = await (await fetch('/jobs/schedule')).json();
+    if (!d.enabled) {
+      $('#sched').innerHTML = '未启用。设环境变量 <b>SCHEDULER_ENABLED=1</b> 后重启服务开启，'
+        + '默认每小时抓一次 Adidas、每天凌晨补一次得物报价。';
+      return;
+    }
+    $('#sched').innerHTML = '已启用 · 站点 <b>' + (d.sites || []).join(' ') + '</b><br>'
+      + d.jobs.map(j => j.id + ' 下次运行 <b>' + (j.next_run ? tfmt(j.next_run) : '—') + '</b>').join('<br>');
+  } catch (e) { $('#sched').textContent = '调度状态获取失败'; }
+}
+
+function tfmt(iso) {
+  const t = new Date(iso), p = n => String(n).padStart(2, '0');
+  return (t.getMonth() + 1) + '-' + p(t.getDate()) + ' ' + p(t.getHours()) + ':' + p(t.getMinutes());
+}
+
+/* ── 最近新品 ── */
+const FLAG = Object.fromEntries(SITES.map(x => [x[0], x[1].split(' ')[0]]));
+
+async function loadNewProducts() {
+  const days = $('#npDays').value;
+  try {
+    const d = await (await fetch('/jobs/new-products?days=' + days + '&limit=300')).json();
+    $('#npInfo').textContent = d.count
+      ? d.count + ' 件（' + Object.entries(d.by_site)
+          .map(x => x[0].toUpperCase() + ' ' + x[1]).join('，') + '）'
+      : '';
+    if (!d.count) {
+      $('#npList').innerHTML = '这段时间没有检测到新品。'
+        + '（新品检测靠抓取任务产生 —— 跑一次「只抓 Adidas」才会有结果）';
+      return;
+    }
+    $('#npList').innerHTML = '<div class="np"><table><thead><tr>'
+      + '<th>发现时间</th><th>站点</th><th>货号</th><th>名称</th><th>价格</th></tr></thead><tbody>'
+      + d.items.map(r => '<tr>'
+        + '<td>' + tfmt(r.created_at) + '</td>'
+        + '<td>' + (FLAG[r.site] || '') + ' ' + (r.site || '').toUpperCase() + '</td>'
+        + '<td>' + (r.url ? '<a href="' + r.url + '" target="_blank" rel="noopener">' + r.sku + '</a>' : r.sku) + '</td>'
+        + '<td class="nm">' + (r.name || '') + '</td>'
+        + '<td>' + (r.price != null ? (r.currency || '') + ' ' + r.price : '—') + '</td>'
+        + '</tr>').join('') + '</tbody></table></div>';
+  } catch (e) { $('#npList').textContent = '新品列表获取失败'; }
+}
+$('#npDays').onchange = loadNewProducts;
+
 renderSites();
+loadSchedule();
+loadNewProducts();
 loadJobs().then(startPolling);
 </script>
 </body>
