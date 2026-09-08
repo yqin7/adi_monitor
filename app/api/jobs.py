@@ -13,8 +13,8 @@ router = APIRouter(prefix="/jobs", tags=["任务"])
 ALL_SITES = ["us", "kr", "jp", "gb", "ca"]
 
 JOBS = {
-    "all": "全流程：五国 Adidas → 得物报价 → 算利润",
-    "adidas": "只抓 Adidas 五国（SKU + 尺码）",
+    "all": "全流程：Adidas 抓取 → 得物报价 → 算利润",
+    "adidas": "只抓 Adidas：各国官网 SKU + 尺码",
     "dewu": "只查得物报价（跳过已知没有的货号）",
     "dewu-retry": "重查历史未命中货号",
     "compute": "只重算利润（不发请求）",

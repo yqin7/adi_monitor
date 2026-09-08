@@ -47,17 +47,25 @@ _STATIC = PROJECT_ROOT / "app" / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
 
+# 页面改动频繁，一律禁用浏览器缓存，避免看到旧版本还以为改动没生效。
+_NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate",
+             "Pragma": "no-cache", "Expires": "0"}
+
+
 @app.get("/ui", include_in_schema=False)
 def ui():
-    """比价结果网页。
+    """比价结果网页。"""
+    return FileResponse(str(_STATIC / "index.html"), headers=_NO_CACHE)
 
-    页面改动频繁，禁用浏览器缓存，避免用户看到旧版本还以为改动没生效。
+
+@app.get("/ui/tasks", include_in_schema=False)
+def ui_tasks():
+    """数据任务页：按国家触发抓取、查看进度与日志。
+
+    与比价页分开 —— 任务是低频的运维操作，混在天天要看的比价表上方
+    既占地方，也让「哪些国家参与本轮抓取」没地方放。
     """
-    return FileResponse(
-        str(_STATIC / "index.html"),
-        headers={"Cache-Control": "no-store, no-cache, must-revalidate",
-                 "Pragma": "no-cache", "Expires": "0"},
-    )
+    return FileResponse(str(_STATIC / "tasks.html"), headers=_NO_CACHE)
 
 
 @app.on_event("startup")

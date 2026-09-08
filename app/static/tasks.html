@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>数据任务 · Adidas × 得物</title>
+<style>
+  /* 与比价页共用同一套设计变量。刻意不抽成公共 css 文件：
+     /static 由 StaticFiles 提供、不发 no-store，抽出去会踩浏览器缓存的坑。 */
+  :root{
+    --bg:#f6f7f9; --card:#fff; --text:#1a1d21; --muted:#6b7280;
+    --line:#e5e7eb; --pos:#0f7b3e; --neg:#b42318; --accent:#111827;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1115; --card:#171a20; --text:#e8eaed; --muted:#9aa1ab;
+           --line:#272b33; --pos:#4ade80; --neg:#f87171; --accent:#e8eaed; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:18px 14px 60px}
+  h1{font-size:20px;margin:0 0 3px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+  .nav{display:flex;gap:10px;align-items:center;margin-bottom:16px}
+  .nav a{color:var(--muted);text-decoration:none;font-size:13px;
+         border:1px solid var(--line);border-radius:7px;padding:5px 11px}
+  .nav a:hover{color:var(--text)}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;
+         padding:14px 16px;margin-bottom:14px}
+  .panel h2{font-size:13px;margin:0 0 11px;color:var(--muted);font-weight:600;
+            letter-spacing:.02em;text-transform:uppercase}
+  .grid{display:flex;flex-wrap:wrap;gap:13px;align-items:end}
+  .f{display:flex;flex-direction:column;gap:4px}
+  .f label{font-size:12px;color:var(--muted);white-space:nowrap}
+  input,select{background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:7px;padding:6px 8px;font-size:13px;width:126px}
+  button{background:var(--accent);color:var(--bg);border:0;border-radius:7px;
+         padding:7px 14px;font-size:13px;cursor:pointer}
+  button:hover{opacity:.88}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .hint{font-size:12px;color:var(--muted);margin-top:9px;line-height:1.6}
+
+  /* 国家多选 */
+  .sites{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+  .site{display:flex;align-items:center;gap:7px;border:1px solid var(--line);
+        border-radius:8px;padding:7px 12px;cursor:pointer;user-select:none;font-size:13px}
+  .site.on{border-color:var(--accent);background:var(--accent);color:var(--bg)}
+
+  /* 任务卡片 */
+  .jobs{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:11px}
+  .jc{border:1px solid var(--line);border-radius:9px;padding:12px 13px;
+      display:flex;flex-direction:column;gap:8px}
+  .jc .t{font-weight:600;font-size:13.5px}
+  .jc .d{font-size:12px;color:var(--muted);flex:1;line-height:1.55}
+  .jc .u{font-size:11.5px;color:var(--muted);opacity:.75}
+  .jc button{width:100%}
+
+  .jobinfo{font-size:13px;color:var(--muted)}
+  .jobinfo .run{color:var(--pos);font-weight:600}
+  .jobinfo .err{color:var(--neg);font-weight:600}
+  .joblog{margin:0;padding:10px 12px;height:420px;overflow:auto;
+          background:var(--bg);border:1px solid var(--line);border-radius:8px;
+          font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;
+          white-space:pre-wrap;word-break:break-all;color:var(--muted)}
+  .bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>数据任务</h1>
+  <div class="sub">抓取 Adidas 各国官网、查询得物报价、重算利润。同一时刻只允许跑一个任务。</div>
+  <div class="nav"><a href="/ui">← 回比价页</a></div>
+
+  <div class="panel">
+    <h2>国家</h2>
+    <div class="sites" id="sites"></div>
+    <div class="hint">仅对「全流程」「只抓 Adidas」生效 —— 得物查询是把各国货号跨站去重后统一进行的，不分国家。</div>
+  </div>
+
+  <div class="panel">
+    <h2>选项</h2>
+    <div class="grid">
+      <div class="f"><label>本轮最多货号</label>
+        <input id="limit" type="number" min="1" placeholder="不限"></div>
+      <div class="f"><label>只查报价超过 N 天</label>
+        <input id="ageDays" type="number" min="0" placeholder="不限"></div>
+      <div class="f"><label>市场</label>
+        <select id="market"><option value="CN">国内卖</option><option value="HK">香港卖</option></select></div>
+    </div>
+    <div class="hint">「只查报价超过 N 天」会跳过报价还新鲜的货号，大幅节省得物调用额度（美国站实测 2150 → 126）。</div>
+  </div>
+
+  <div class="panel">
+    <h2>任务</h2>
+    <div class="jobs" id="jobs">加载中…</div>
+  </div>
+
+  <div class="panel">
+    <h2>进度与日志</h2>
+    <div class="bar">
+      <span class="jobinfo" id="jobInfo">空闲</span>
+      <button class="ghost" id="jobCancel" hidden>停止</button>
+      <button class="ghost" id="logClear">清空日志</button>
+    </div>
+    <pre class="joblog" id="jobLog"></pre>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const NL = String.fromCharCode(10);
+const SITES = [['us','\u{1F1FA}\u{1F1F8} 美国'], ['kr','\u{1F1F0}\u{1F1F7} 韩国'],
+               ['jp','\u{1F1EF}\u{1F1F5} 日本'], ['gb','\u{1F1EC}\u{1F1E7} 英国'],
+               ['ca','\u{1F1E8}\u{1F1E6} 加拿大']];
+
+/* 每个任务吃哪些参数 —— 决定卡片提示文案和「没选国家就禁用」的逻辑。
+   与 app/api/jobs.py 的 _make() 保持一致。 */
+const USES = {
+  'all':        {sites:true,  limit:true,  age:true},
+  'adidas':     {sites:true,  limit:false, age:false},
+  'dewu':       {sites:false, limit:true,  age:true},
+  'dewu-retry': {sites:false, limit:true,  age:false},
+  'compute':    {sites:false, limit:false, age:false},
+};
+
+let picked = new Set(SITES.map(s => s[0]));
+try {
+  const saved = JSON.parse(localStorage.getItem('task_sites') || 'null');
+  if (Array.isArray(saved)) picked = new Set(saved);
+} catch (e) {}
+const saveSites = () => {
+  try { localStorage.setItem('task_sites', JSON.stringify([...picked])); } catch (e) {}
+};
+
+function renderSites() {
+  const all = picked.size === SITES.length;
+  $('#sites').innerHTML = SITES.map(([k, label]) =>
+      `<span class="site${picked.has(k) ? ' on' : ''}" data-s="${k}">${label}</span>`).join('')
+    + `<button class="ghost" id="allSites">${all ? '全不选' : '全选'}</button>`;
+  document.querySelectorAll('.site').forEach(el => el.onclick = () => {
+    const k = el.dataset.s;
+    picked.has(k) ? picked.delete(k) : picked.add(k);
+    saveSites(); renderSites(); renderJobs();
+  });
+  $('#allSites').onclick = () => {
+    picked = all ? new Set() : new Set(SITES.map(s => s[0]));
+    saveSites(); renderSites(); renderJobs();
+  };
+}
+
+let JOBS = [], busy = false;
+
+function renderJobs() {
+  $('#jobs').innerHTML = JOBS.map(j => {
+    const u = USES[j.name] || {};
+    const blocked = u.sites && picked.size === 0;
+    const [title, desc] = j.label.includes('：')
+      ? [j.label.split('：')[0], j.label.split('：').slice(1).join('：')]
+      : [j.label, ''];
+    const names = Object.fromEntries(SITES);
+    const chosen = SITES.filter(x => picked.has(x[0])).map(x => names[x[0]]).join(' ');
+    const uses = [u.limit ? '货号上限' : null,
+                  u.age ? '报价天数' : null].filter(Boolean);
+    return `<div class="jc">
+      <div class="t">${title}</div>
+      <div class="d">${desc || '&nbsp;'}</div>
+      <div class="u">${u.sites
+          ? (chosen ? '将抓取：' + chosen : '未选国家')
+          : '不分国家'}${uses.length ? ' · ' + uses.join(' · ') : ''}</div>
+      <button class="job${j.name === 'all' ? '' : ' ghost'}" data-job="${j.name}"
+              ${busy || blocked ? 'disabled' : ''}
+              title="${blocked ? '请先勾选至少一个国家' : ''}">运行</button>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('button.job').forEach(b =>
+    b.onclick = () => runJob(b.dataset.job));
+}
+
+async function loadJobs() {
+  try {
+    const d = await (await fetch('/jobs')).json();
+    JOBS = d.jobs || [];
+    busy = !!d.busy;
+    renderJobs();
+  } catch (e) { $('#jobs').textContent = '任务列表加载失败'; }
+}
+
+/* ── 运行与轮询 ─────────────────────────────────────────────────────── */
+let logOffset = 0, jobTimer = null, lastStatus = null;
+
+function appendLog(lines) {
+  if (!lines || !lines.length) return;
+  const el = $('#jobLog');
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.textContent += lines.join(NL) + NL;
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+async function runJob(name) {
+  const u = USES[name] || {};
+  const p = new URLSearchParams({market: $('#market').value});
+  if (u.sites) p.set('sites', [...picked].join(','));
+  const lim = $('#limit').value.trim();
+  if (u.limit && lim !== '') p.set('limit', lim);
+  const age = $('#ageDays').value.trim();
+  if (u.age && age !== '') p.set('max_quote_age_days', age);
+
+  const r = await fetch('/jobs/run/' + name + '?' + p.toString(), {method: 'POST'});
+  if (!r.ok) { alert((await r.json()).detail || '启动失败'); return; }
+  $('#jobLog').textContent = '';
+  logOffset = 0; lastStatus = 'running';
+  busy = true; renderJobs();
+  startPolling();
+}
+
+async function poll() {
+  let d;
+  try { d = await (await fetch('/jobs/status?offset=' + logOffset)).json(); }
+  catch (e) { return; }
+
+  if (d.idle) {
+    $('#jobInfo').textContent = '空闲';
+    $('#jobCancel').hidden = true;
+    if (busy) { busy = false; renderJobs(); }
+    clearInterval(jobTimer); jobTimer = null;
+    return;
+  }
+  // 响应异常（网络抖动、代理插了一脚）时跳过这一轮就好；
+  // 若继续往下走会把 label/elapsed 读成 undefined，并误判任务已结束而停掉轮询。
+  if (!d || typeof d.status !== 'string') return;
+  appendLog(d.lines);
+  logOffset = d.next_offset ?? logOffset;
+
+  const mm = String(Math.floor(d.elapsed / 60)).padStart(2, '0');
+  const ss = String(d.elapsed % 60).padStart(2, '0');
+  const tag = {running: '<span class="run">运行中</span>', done: '已完成',
+               failed: '<span class="err">失败</span>',
+               cancelled: '已取消'}[d.status] || d.status;
+  $('#jobInfo').innerHTML = d.label + ' · ' + tag + ' · ' + mm + ':' + ss;
+
+  const running = d.status === 'running';
+  $('#jobCancel').hidden = !running;
+  if (busy !== running) { busy = running; renderJobs(); }
+  if (lastStatus === 'running' && !running) { clearInterval(jobTimer); jobTimer = null; }
+  lastStatus = d.status;
+}
+
+function startPolling() {
+  if (jobTimer) clearInterval(jobTimer);
+  poll();
+  jobTimer = setInterval(poll, 2000);
+}
+
+$('#jobCancel').onclick = () => fetch('/jobs/cancel', {method: 'POST'});
+$('#logClear').onclick = () => { $('#jobLog').textContent = ''; };
+
+renderSites();
+loadJobs().then(startPolling);
+</script>
+</body>
+</html>

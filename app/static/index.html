@@ -119,14 +119,15 @@
   input.ov:focus{background:var(--bg);border-style:solid}
   input.ov.set{background:var(--hl);border-style:solid;font-weight:600}
   .empty{padding:44px;text-align:center;color:var(--muted)}
-  .jobinfo{margin-left:auto;font-size:12.5px;color:var(--muted);text-align:right}
-  .jobinfo .run{color:var(--pos);font-weight:600}
-  .jobinfo .err{color:var(--neg);font-weight:600}
-  .joblog{margin:12px 0 0;padding:10px 12px;max-height:280px;overflow:auto;
-          background:var(--bg);border:1px solid var(--line);border-radius:8px;
-          font:11.5px/1.55 ui-monospace,Menlo,Consolas,monospace;
-          white-space:pre-wrap;word-break:break-all;color:var(--muted)}
-  button.job:disabled{opacity:.4;cursor:not-allowed}
+  /* 任务面板已独立到 /ui/tasks，这里只保留一个状态指示灯 */
+  .topnav{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .topnav a{color:var(--muted);text-decoration:none;font-size:13px;
+            border:1px solid var(--line);border-radius:7px;padding:5px 11px}
+  .topnav a:hover{color:var(--text)}
+  .jobbadge{font-size:12.5px;color:var(--muted);border:1px solid var(--line);
+            border-radius:7px;padding:5px 10px}
+  .jobbadge.run{color:var(--pos);border-color:var(--pos)}
+  .jobbadge.err{color:var(--neg);border-color:var(--neg)}
   .pager{display:flex;gap:8px;align-items:center;justify-content:center;
          margin:10px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
   .pager button{padding:5px 12px;font-size:12.5px}
@@ -145,27 +146,17 @@
   <h1>Adidas × 得物 比价</h1>
   <div class="sub">填入你的返利与运费，回车即刻重算利润</div>
 
+  <div class="topnav">
+    <a href="/ui/tasks">数据任务 →</a>
+    <span class="jobbadge" id="jobBadge" hidden></span>
+  </div>
+
   <div class="tabs">
     <button class="active" data-site="us">🇺🇸 美国</button>
     <button data-site="kr">🇰🇷 韩国</button>
     <button data-site="jp">🇯🇵 日本</button>
     <button data-site="gb">🇬🇧 英国</button>
     <button data-site="ca">🇨🇦 加拿大</button>
-  </div>
-
-  <div class="panel">
-    <h2>数据任务</h2>
-    <div class="grid" style="align-items:center">
-      <button class="job" data-job="all">全流程</button>
-      <button class="job ghost" data-job="adidas">只抓 Adidas</button>
-      <button class="job ghost" data-job="dewu">只查得物</button>
-      <button class="job ghost" data-job="dewu-retry">重查未命中</button>
-      <button class="job ghost" data-job="compute">只算利润</button>
-      <button class="ghost" id="jobCancel" hidden>停止</button>
-      <button class="ghost" id="logToggle">日志</button>
-      <span class="jobinfo" id="jobInfo">空闲</span>
-    </div>
-    <pre class="joblog" id="jobLog" hidden></pre>
   </div>
 
   <div class="panel">
@@ -631,68 +622,57 @@ document.querySelectorAll('th[data-k]').forEach(th => th.onclick = (ev) => {
   render();
 });
 
-/* ── 任务面板 ───────────────────────────────────────────────────────── */
-let logOffset = 0, jobTimer = null, lastJobStatus = null;
-
-function setJobButtons(busy) {
-  document.querySelectorAll('button.job').forEach(b => b.disabled = busy);
-  $('#jobCancel').hidden = !busy;
-}
-
-function appendLog(lines) {
-  if (!lines.length) return;
-  const el = $('#jobLog');
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  el.textContent += lines.join(String.fromCharCode(10)) + String.fromCharCode(10);
-  if (atBottom) el.scrollTop = el.scrollHeight;
-}
+/* ── 任务状态（面板已独立到 /ui/tasks，这里只留一个轻量指示灯）──────
+   作用有二：告诉你现在有任务在跑，以及任务跑完后自动刷新表格。 */
+let jobTimer = null, lastJobStatus = null;
 
 async function pollJob() {
   let d;
-  try { d = await (await fetch('/jobs/status?offset=' + logOffset)).json(); }
+  try { d = await (await fetch('/jobs/status')).json(); }
   catch (e) { return; }
 
+  const el = $('#jobBadge');
   if (d.idle) {
-    $('#jobInfo').textContent = '空闲';
-    setJobButtons(false);
+    el.hidden = true;
     clearInterval(jobTimer); jobTimer = null;
     return;
   }
-  appendLog(d.lines || []);
-  logOffset = d.next_offset ?? logOffset;
+  // 响应异常（网络抖动、代理插了一脚）时跳过这一轮就好；
+  // 若继续往下走会把 label/elapsed 读成 undefined，并误判任务已结束而停掉轮询。
+  if (!d || typeof d.status !== 'string') return;
+  const running = d.status === 'running';
+  const label = {running:'运行中', done:'已完成',
+                 failed:'失败', cancelled:'已取消'}[d.status] || d.status;
+
+  if (!running) {
+    // 任务已结束。只有「本页看着它跑完」才值得提示一下并刷新数据；
+    // 否则（比如刚打开页面，看到的是几小时前那次的残留状态）直接不显示。
+    if (lastJobStatus === 'running') {
+      el.hidden = false;
+      el.className = 'jobbadge' + (d.status === 'failed' ? ' err' : '');
+      el.textContent = d.label + ' · ' + label;
+      loadData();
+    } else {
+      el.hidden = true;
+    }
+    clearInterval(jobTimer); jobTimer = null;   // 结束了就别再轮询
+    lastJobStatus = d.status;
+    return;
+  }
 
   const mm = String(Math.floor(d.elapsed / 60)).padStart(2, '0');
   const ss = String(d.elapsed % 60).padStart(2, '0');
-  const tag = {running: '<span class="run">运行中</span>', done: '已完成',
-               failed: '<span class="err">失败</span>', cancelled: '已取消'}[d.status] || d.status;
-  $('#jobInfo').innerHTML = `${d.label} · ${tag} · ${mm}:${ss}`;
-  setJobButtons(d.status === 'running');
-
-  // 任务刚结束 -> 自动刷新表格数据
-  if (lastJobStatus === 'running' && d.status !== 'running') {
-    clearInterval(jobTimer); jobTimer = null;
-    loadData();
-  }
+  el.hidden = false;
+  el.className = 'jobbadge run';
+  el.textContent = '● ' + d.label + ' · ' + label + ' · ' + mm + ':' + ss;
   lastJobStatus = d.status;
 }
 
 function startPolling() {
   if (jobTimer) clearInterval(jobTimer);
   pollJob();
-  jobTimer = setInterval(pollJob, 2000);
+  jobTimer = setInterval(pollJob, 3000);
 }
-
-document.querySelectorAll('button.job').forEach(b => b.onclick = async () => {
-  const name = b.dataset.job;
-  const r = await fetch(`/jobs/run/${name}?market=CN`, {method: 'POST'});
-  if (!r.ok) { alert((await r.json()).detail || '启动失败'); return; }
-  $('#jobLog').textContent = ''; logOffset = 0; lastJobStatus = 'running';
-  $('#jobLog').hidden = false;
-  setJobButtons(true);
-  startPolling();
-});
-$('#jobCancel').onclick = () => fetch('/jobs/cancel', {method: 'POST'});
-$('#logToggle').onclick = () => { $('#jobLog').hidden = !$('#jobLog').hidden; };
 
 (async () => { await loadFx(); await loadData(); startPolling(); })();
 </script>
