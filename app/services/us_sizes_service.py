@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
@@ -97,8 +98,12 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     if not collected:
         return {"skus": 0, "updated": 0}
 
+    # 尺码与价格是两次独立抓取（价格走 PLP，尺码走 taxonomy），
+    # 所以单独记时间，前端才能分辨「价格新但尺码旧」这种情况。
+    now = datetime.utcnow()
     ops = [UpdateOne({"sku": sku, "site": "us"},
-                     {"$set": {"available_sizes": sizes}})
+                     {"$set": {"available_sizes": sizes,
+                               "sizes_updated_at": now}})
            for sku, sizes in collected.items()]
     written = 0
     for i in range(0, len(ops), 2000):
@@ -107,7 +112,6 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
 
     # 记录尺码快照，供补货/断码检测
     from app.dao.size_history_dao import SizeHistoryDAO
-    from datetime import datetime
     sh = SizeHistoryDAO(conn.db)
     sh.ensure_indexes()
     diff = sh.record_changes("us", collected,

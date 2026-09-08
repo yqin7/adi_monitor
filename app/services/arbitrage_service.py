@@ -76,6 +76,7 @@ def _chunk(seq: list, n: int):
 
 def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                    include_missed: bool = False, site: str | None = None,
+                   max_quote_age_days: int | None = None,
                    region: str = "CN", currency: str = "CNY",
                    progress: Callable[[str], None] | None = None,
                    should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
@@ -87,8 +88,9 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                  跨货号攒批，避免每个货号只塞 7 个 id 就发一次
       3. 落库 —— 按货号拼回并写 dewu_quotes
 
-    only_discounted : 只查 Adidas 在打折的商品
-    include_missed  : 是否重试历史未命中的货号
+    only_discounted    : 只查 Adidas 在打折的商品
+    include_missed     : 是否重试历史未命中的货号
+    max_quote_age_days : 只重查报价超过 N 天的货号（省得物调用额度）
     """
     def report(msg: str) -> None:
         log.info(msg)
@@ -106,15 +108,18 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     if site:
         q["site"] = site
     all_skus = sorted({d["sku"] for d in conn.db["products"].find(q, {"sku": 1})})
-    targets = dao.skus_to_refresh(all_skus, include_missed=include_missed)
+    targets = dao.skus_to_refresh(all_skus, include_missed=include_missed,
+                                  max_quote_age_days=max_quote_age_days)
     if limit:
         targets = targets[:limit]
 
     # ── 阶段1：目录（能用缓存就不调接口）────────────────────────────────
     cached = dao.load_sku_maps(targets)
     todo = [s for s in targets if s not in cached]
-    report(f"候选 {len(all_skus)}，本轮 {len(targets)}；目录缓存命中 {len(cached)}，"
-           f"需拉取 {len(todo)}")
+    stale_note = (f"（只查报价 >{max_quote_age_days} 天的）"
+                  if max_quote_age_days is not None else "")
+    report(f"候选 {len(all_skus)}，本轮 {len(targets)}{stale_note}；"
+           f"目录缓存命中 {len(cached)}，需拉取 {len(todo)}")
 
     catalogs: dict[str, dict] = {s: cached[s] for s in cached}
     miss = errors = 0

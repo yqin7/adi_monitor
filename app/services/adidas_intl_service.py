@@ -87,6 +87,7 @@ def parse_item(it: dict, category: str, site: str) -> dict | None:
     link = it.get("link") or ""
     url = (f"https://{host}" + link) if link.startswith("/") else link
     sizes = [s for s in (it.get("availableSizes") or []) if s and str(s).lower() != "hidden"]
+    _now = datetime.utcnow()
 
     return {
         "sku": sku, "site": site,
@@ -99,7 +100,10 @@ def parse_item(it: dict, category: str, site: str) -> dict | None:
         "colour_variations": it.get("colorVariations", []),
         "rating": it.get("rating"), "rating_count": it.get("ratingCount"),
         **parse_badges(it.get("badges")),
-        "scraped_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # 存成 datetime（曾误存为字符串），与美国站 products.updated_at 类型对齐，
+        # 前端/接口才能统一做新鲜度比较。国际站尺码与价格同一次请求取得，
+        # 所以 sizes_updated_at 取同一时刻。
+        "scraped_at": _now, "sizes_updated_at": _now,
     }
 
 

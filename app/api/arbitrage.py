@@ -14,6 +14,22 @@ def _dao() -> ArbitrageDAO:
     return ArbitrageDAO(MongoConnection.from_environment(required=True).db)
 
 
+def _iso(dt) -> str | None:
+    """统一输出带 Z 的 UTC 时间串。
+
+    Mongo 里存的是 naive UTC，直接交给 FastAPI 序列化会丢掉时区标记，
+    浏览器 new Date() 会当成本地时间解析 —— 在国内就是 8 小时的偏差。
+    """
+    if dt is None:
+        return None
+    if isinstance(dt, str):                     # 历史遗留的字符串格式
+        return dt if dt.endswith("Z") else dt + "Z"
+    if dt.tzinfo is not None:
+        from datetime import timezone
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 @router.get("", summary="套利机会列表（可按利润/利润率/销量排序）")
 def list_opportunities(
     sort_by: str = Query("profit", description="profit | roi | monthly_sales | dewu_price | cost_local"),
@@ -45,16 +61,61 @@ def stats():
             "matched": matched, "missed": missed, "top5_by_profit": top}
 
 
+@router.get("/freshness", summary="各数据源的新鲜度（顶栏用）")
+def freshness(site: str = Query("us", description="us | kr | jp | gb | ca")):
+    """回答「表里这批数据是什么时候扫的」。
+
+    Adidas 价格与尺码是两条独立链路（价格走 PLP / taxonomy，美国站尺码另走一次），
+    所以分开统计；得物报价是分批刷的，除了最新最旧还给出分桶，
+    好判断「整体可信度」而不是被单个极值误导。
+    """
+    from datetime import datetime, timedelta
+    dao = _dao()
+    prod = dao.db["products"]
+
+    def span(field: str) -> dict:
+        q = {"site": site, field: {"$ne": None}}
+        n = prod.count_documents(q)
+        if not n:
+            return {"count": 0, "newest": None, "oldest": None}
+        newest = prod.find_one(q, {field: 1}, sort=[(field, -1)])
+        oldest = prod.find_one(q, {field: 1}, sort=[(field, 1)])
+        return {"count": n,
+                "newest": _iso((newest or {}).get(field)),
+                "oldest": _iso((oldest or {}).get(field))}
+
+    # 美国站价格写在 updated_at，其余站写在 scraped_at
+    price = span("updated_at") if site == "us" else span("scraped_at")
+    sizes = span("sizes_updated_at")
+
+    qf = dao.quote_freshness()
+    quotes = {"count": qf.get("total", 0),
+              "newest": _iso(qf.get("newest")), "oldest": _iso(qf.get("oldest")),
+              "buckets": qf.get("buckets", {})}
+
+    # 本站有多少货号还完全没有得物报价 —— 补全进度
+    site_skus = prod.distinct("sku", {"site": site})
+    quoted = dao.quotes.count_documents({"sku": {"$in": site_skus}}) if site_skus else 0
+
+    return {"site": site, "server_time": _iso(datetime.utcnow()),
+            "adidas_price": price, "adidas_sizes": sizes, "dewu_quotes": quotes,
+            "coverage": {"site_skus": len(site_skus), "with_quote": quoted}}
+
+
 @router.post("/refresh", summary="拉取得物报价（后台执行）")
 def refresh(background: BackgroundTasks,
             limit: int | None = Query(None, description="本轮最多查询多少个货号"),
             only_discounted: bool = Query(True, description="只查 Adidas 打折商品"),
-            include_missed: bool = Query(False, description="是否重试历史未命中货号")):
+            include_missed: bool = Query(False, description="是否重试历史未命中货号"),
+            max_quote_age_days: int | None = Query(
+                None, description="只重查报价超过 N 天的货号，省调用额度")):
     background.add_task(arbitrage_service.refresh_quotes,
                         limit=limit, only_discounted=only_discounted,
-                        include_missed=include_missed)
+                        include_missed=include_missed,
+                        max_quote_age_days=max_quote_age_days)
     return {"message": "已在后台开始拉取得物报价", "limit": limit,
-            "only_discounted": only_discounted}
+            "only_discounted": only_discounted,
+            "max_quote_age_days": max_quote_age_days}
 
 
 @router.post("/compute", summary="重新计算套利机会")
@@ -124,7 +185,9 @@ def fx():
             d = requests.get(url, timeout=12).json()
             rates, ts = pick(d)
             cny = rates["CNY"]
+            from datetime import datetime as _dt
             out = {"source": name, "updated": ts, "live": True,
+                   "fetched_at": _iso(_dt.utcnow()),
                    "usd_cny": round(cny, 4), "usd_hkd": round(rates["HKD"], 4)}
             # 各站本币 -> 人民币，供前端按 site 取用
             for cur in ("KRW", "JPY", "GBP", "CAD", "EUR"):
@@ -158,10 +221,13 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
         {"site": site},
         {"sku": 1, "name": 1, "category": 1, "orig_price": 1, "sale_price": 1,
          "url": 1, "is_sold_out": 1, "promo_code": 1, "promo_rate": 1,
-         "currency": 1, "available_sizes": 1})}
+         "currency": 1, "available_sizes": 1,
+         # 新鲜度：美国站价格在 updated_at，其余站在 scraped_at
+         "updated_at": 1, "scraped_at": 1, "sizes_updated_at": 1})}
 
     rows = []
     for q in dao.quotes.find({}):
+        quote_at = _iso(q.get("fetched_at"))
         p = products.get(q["sku"])
         if not p:
             continue
@@ -190,6 +256,10 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
                 "monthly_sales": s.get("globalSoldNum30"),
                 "sales_mom": s.get("globalMonthToMonthRatio"),
                 "global_sku_id": s.get("globalSkuId"),
+                # ── 数据新鲜度（前端圆点 + 悬停明细用）──
+                "adidas_at": _iso(p.get("updated_at") or p.get("scraped_at")),
+                "sizes_at": _iso(p.get("sizes_updated_at")),
+                "dewu_at": quote_at,
             })
             if len(rows) >= limit:
                 break

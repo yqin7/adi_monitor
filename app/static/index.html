@@ -38,6 +38,31 @@
     border:5px solid transparent;border-top-color:var(--accent);
     opacity:0;visibility:hidden;transition:opacity .12s;z-index:5}
   .f label.tip:hover::after,.f label.tip:hover::before{opacity:1;visibility:visible}
+  /* ── 数据新鲜度 ────────────────────────────────────────────── */
+  .fresh{display:flex;flex-wrap:wrap;gap:7px 16px;align-items:center;
+         background:var(--card);border:1px solid var(--line);border-radius:10px;
+         padding:9px 13px;margin-bottom:12px;font-size:12.5px;color:var(--muted)}
+  .fresh b{color:var(--text);font-weight:600}
+  .fresh .sep{opacity:.35}
+  .fresh .warn{color:#d29922}
+  .fresh .bad{color:#f85149}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;
+       vertical-align:middle;position:relative;cursor:help;margin-right:6px;flex:none}
+  .dot.f0{background:#3fb950}   /* 24 小时内 */
+  .dot.f1{background:#d29922}   /* 1-7 天 */
+  .dot.f2{background:#f85149}   /* 超过 7 天 */
+  .dot.f3{background:#6e7681}   /* 时间未知 */
+  .dot::after{
+    content:attr(data-tip);position:absolute;left:-4px;bottom:calc(100% + 8px);
+    background:var(--accent);color:var(--bg);padding:7px 10px;border-radius:6px;
+    font-size:11.5px;line-height:1.6;white-space:pre;text-align:left;
+    opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none;z-index:9;
+    box-shadow:0 3px 10px rgba(0,0,0,.25)}
+  .dot::before{
+    content:"";position:absolute;left:1px;bottom:calc(100% + 3px);
+    border:5px solid transparent;border-top-color:var(--accent);
+    opacity:0;visibility:hidden;transition:opacity .12s;z-index:9}
+  .dot:hover::after,.dot:hover::before{opacity:1;visibility:visible}
   input,select{background:var(--bg);color:var(--text);border:1px solid var(--line);
                border-radius:7px;padding:6px 8px;font-size:13px;width:96px}
   #ship,#tax,#rakuten,#rmn,#bank{width:74px}
@@ -168,7 +193,8 @@
           <option value="profit_hk">香港净利</option>
           <option value="profit">净利(较优)</option>
           <option value="roi">利润率 ROI</option>
-          <option value="monthly_sales">月销</option></select></div>
+          <option value="monthly_sales">月销</option>
+          <option value="dewu_age_h">得物报价最旧优先</option></select></div>
       <div class="f"><label>最低月销</label><input id="minSales" type="number" value="20"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤，负利润也显示">最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤">最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
@@ -176,6 +202,10 @@
         <select id="posHk"><option value="0">全部</option><option value="1">仅利润为正</option></select></div>
       <div class="f"><label>国内到手</label>
         <select id="posCn"><option value="0">全部</option><option value="1">仅利润为正</option></select></div>
+      <div class="f"><label class="tip" data-tip="得物价格会变，过旧的报价算出的利润不可信">得物报价</label>
+        <select id="quoteAge"><option value="0">不限</option><option value="1">1 天内</option>
+          <option value="3">3 天内</option><option value="7">7 天内</option>
+          <option value="30">30 天内</option></select></div>
       <div class="f"><label class="tip" data-tip="仅韩国站能拿到尺码库存；美国站无此数据，勾选后会全部过滤掉">只显示有货</label>
         <select id="stockOnly"><option value="0">全部</option><option value="1">仅有货</option></select></div>
       <div class="f"><label>&nbsp;</label><button class="ghost" id="reset">重置</button></div>
@@ -184,13 +214,15 @@
     </div>
   </div>
 
+  <div class="fresh" id="fresh">数据新鲜度加载中…</div>
+
   <div class="stats" id="stats"></div>
 
   <div class="pager" id="pagerTop"></div>
   <div class="tablewrap">
     <table>
       <thead><tr>
-        <th data-k="sku">货号</th><th>名称</th>
+        <th data-k="sku" title="货号前的圆点表示数据新鲜度：绿=24小时内，黄=1-7天，红=超过7天，灰=未知。鼠标悬停看明细">货号</th><th>名称</th>
         <th class="tight nosort"><select id="catFilter" class="hsel"><option value="">类别</option></select></th>
         <th class="tight">尺码</th>
         <th class="tight" data-k="in_stock">库存</th>
@@ -241,6 +273,44 @@ try { OVERRIDES = JSON.parse(localStorage.getItem('dewu_overrides') || '{}'); } 
 const saveOv = () => { try { localStorage.setItem('dewu_overrides', JSON.stringify(OVERRIDES)); } catch (e) {} };
 
 const num = id => Number($('#' + id).value) || 0;
+
+/* ── 数据新鲜度 ─────────────────────────────────────────────────────
+   后端给的时间都是带 Z 的 UTC 串，Date.parse 后按本地时区展示。 */
+const HOUR_MS = 3600000;
+const ageH = iso => iso ? (Date.now() - Date.parse(iso)) / HOUR_MS : null;
+
+function ago(iso) {
+  const h = ageH(iso);
+  if (h === null) return '未记录';
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + ' 分钟前';
+  if (h < 48) return h.toFixed(1) + ' 小时前';
+  return (h / 24).toFixed(1) + ' 天前';
+}
+function freshCls(h) {
+  if (h === null) return 'f3';
+  if (h < 24) return 'f0';
+  if (h < 24 * 7) return 'f1';
+  return 'f2';
+}
+function stamp(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso), p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+       + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+/* 行级圆点：颜色取三个环节里【最旧】的那个 —— 一行数据能不能信，
+   由最陈旧的环节决定。任一环节缺时间戳则最高只给黄色，不给绿色。 */
+function freshDot(r) {
+  const parts = [['Adidas 抓取', r.adidas_at],
+                 ['尺码更新  ', r.sizes_at],
+                 ['得物报价  ', r.dewu_at]];
+  const known = parts.map(x => ageH(x[1])).filter(a => a !== null);
+  let cls = known.length ? freshCls(Math.max.apply(null, known)) : 'f3';
+  if (known.length < parts.length && cls === 'f0') cls = 'f1';
+  const tip = parts.map(x => x[0] + '  ' + stamp(x[1]) + '  (' + ago(x[1]) + ')')
+                   .join('&#10;');
+  return '<span class="dot ' + cls + '" data-tip="' + tip + '"></span>';
+}
 /* 空字符串视为「不限」，返回 null；填了才参与过滤 */
 const lim = id => { const v = $('#' + id).value.trim(); return v === '' ? null : Number(v); };
 const fmt = (v, d = 0) => v == null || isNaN(v) ? '—'
@@ -295,6 +365,7 @@ function calc(r) {
   // 排序/筛选以「更优的一边」为准
   const profit = Math.max(profitCn, profitHk);
   return {...r, after_promo: afterPromo, cashback, net_usd: netUsd, ship_cny: shipCny,
+          dewu_age_h: ageH(r.dewu_at),
           hk_price: hkPrice, cn_price: cnPrice,
           payout_hk: payoutHk, payout_cn: payoutCn,
           profit_hk: profitHk, profit_cn: profitCn,
@@ -350,6 +421,7 @@ function render() {
   const posHk = $('#posHk').value === '1';
   const posCn = $('#posCn').value === '1';
   const cat = $('#catFilter').value;
+  const maxAgeH = Number($('#quoteAge').value || 0) * 24;
   let rows = RAW.map(calc).filter(r =>
     r.payout != null                       // 该市场没有报价的行不参与
     && (r.monthly_sales || 0) >= minSales
@@ -358,7 +430,8 @@ function render() {
     && (!stockOnly || r.in_stock === true)
     && (!posHk || r.profit_hk > 0)
     && (!posCn || r.profit_cn > 0)
-    && (!cat || r.category === cat));
+    && (!cat || r.category === cat)
+    && (!maxAgeH || (r.dewu_age_h != null && r.dewu_age_h <= maxAgeH)));
 
   const dir = order === 'desc' ? -1 : 1;
   rows.sort((a, b) => {
@@ -390,7 +463,7 @@ function render() {
       ? `<span class="code">${r.promo_code} ${Math.round((1 - r.promo_rate) * 100)}%off</span>`
       : '<span class="tag">无</span>';
     return `<tr>
-      <td class="sku">${link}</td>
+      <td class="sku">${freshDot(r)}${link}</td>
       <td class="name" title="${(r.name || '').replace(/"/g, '&quot;')}">${r.name || '—'}</td>
       <td><span class="cat">${CAT[r.category] || r.category || '—'}</span></td>
       <td class="tight"><span class="tag">${r.size ?? '—'}</span></td>
@@ -427,6 +500,35 @@ function render() {
   renderPager(rows.length);
 }
 
+async function loadFreshness() {
+  const seq = loadSeq, site = SITE;
+  try {
+    const d = await (await fetch('/arbitrage/freshness?site=' + site)).json();
+    if (seq !== loadSeq || site !== SITE) return;        // 切站了，丢弃迟到结果
+    const flag = {us:'🇺🇸', kr:'🇰🇷', jp:'🇯🇵', gb:'🇬🇧', ca:'🇨🇦'}[site] || '';
+    const seg = (label, o) => {
+      if (!o || !o.count) return label + ' <b>未记录</b>';
+      const h = ageH(o.newest), cls = freshCls(h);
+      const c = cls === 'f2' ? 'bad' : cls === 'f1' ? 'warn' : '';
+      return label + ' <b class="' + c + '">' + ago(o.newest) + '</b>'
+           + '<span class="sep"> · 最旧 ' + ago(o.oldest) + '</span>';
+    };
+    const q = d.dewu_quotes || {}, bk = q.buckets || {};
+    const cov = d.coverage || {};
+    const covPct = cov.site_skus ? (cov.with_quote / cov.site_skus * 100).toFixed(0) : 0;
+    const fxAgo = (FX && FX.fetched_at) ? ago(FX.fetched_at) : '—';
+    $('#fresh').innerHTML =
+        '<span>' + flag + ' ' + seg('Adidas 价格', d.adidas_price) + '</span>'
+      + '<span>' + seg('尺码', d.adidas_sizes) + '</span>'
+      + '<span>' + seg('得物报价', q)
+        + (bk.d7 != null && q.count ? '<span class="sep"> · 7天内 ' + fmt(bk.d7)
+             + '/' + fmt(q.count) + '</span>' : '') + '</span>'
+      + '<span>得物覆盖 <b>' + fmt(cov.with_quote) + '/' + fmt(cov.site_skus)
+        + '</b> (' + covPct + '%)</span>'
+      + '<span>汇率 <b>' + fxAgo + '</b></span>';
+  } catch (e) { $('#fresh').textContent = '数据新鲜度获取失败'; }
+}
+
 async function loadFx() {
   try {
     const d = await (await fetch('/arbitrage/fx')).json();
@@ -455,6 +557,7 @@ async function loadData() {
     RAW = d.items || []; FEES = d.sell_cn_fees; FEES_HK = d.sell_hk_fees;
     fillCategories();
     render();
+    loadFreshness();
   } catch (e) {
     if (seq === loadSeq) $('#empty').hidden = false;
   } finally {
@@ -503,6 +606,7 @@ $('#reset').onclick = () => {
   ['rakuten','rmn','bank','ship','tax'].forEach((k, i) => $('#' + k).value = ['',0,3,0,0][i]);
   $('#minSales').value = 20; $('#minProfit').value = ''; $('#minRoi').value = '';
   $('#stockOnly').value = '0'; $('#posHk').value = '0'; $('#posCn').value = '0';
+  $('#quoteAge').value = '0';
   $('#catFilter').value = '';
   loadFx().then(render);
 };
@@ -511,6 +615,7 @@ document.querySelectorAll('input').forEach(el =>
 $('#clearOv').onclick = () => { OVERRIDES = {}; saveOv(); render(); };
 $('#sortBy').onchange = () => { sortBy = $('#sortBy').value; page = 0; render(); };
 $('#stockOnly').onchange = () => { page = 0; render(); };
+$('#quoteAge').onchange = () => { page = 0; render(); };
 $('#catFilter').onchange = e => {
   e.target.classList.toggle('active', !!e.target.value);
   page = 0; render();

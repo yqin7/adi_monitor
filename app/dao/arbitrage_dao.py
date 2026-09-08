@@ -67,21 +67,66 @@ class ArbitrageDAO:
         )
 
     def skus_to_refresh(self, all_skus: Iterable[str], *, include_missed: bool,
-                        missed_cooldown_days: int = 30) -> list[str]:
-        """挑出本轮需要查询的货号：未查过的 + 已命中的；未命中的按冷却期跳过。"""
+                        missed_cooldown_days: int = 30,
+                        max_quote_age_days: int | None = None) -> list[str]:
+        """挑出本轮需要查询的货号，并按「最陈旧的排前面」返回。
+
+        规则：
+          - 从没查过的           -> 查（排最前，从无到有价值最高）
+          - 已命中的             -> 查；若给了 max_quote_age_days，则报价还新鲜的跳过
+          - 未命中的             -> 默认跳过；include_missed 时按冷却期重试
+
+        max_quote_age_days 是省额度的关键：得物有日调用上限，不加这个参数时
+        每轮都会把几千个已有新鲜报价的货号重查一遍。给个 7，就只补该补的。
+
+        排序按报价时间升序 —— 中途被限流打断时，先跑完的是最该更新的那批。
+        """
         from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(days=missed_cooldown_days)
+        now = datetime.utcnow()
+        cutoff = now - timedelta(days=missed_cooldown_days)
+        quote_cutoff = (now - timedelta(days=max_quote_age_days)
+                        if max_quote_age_days is not None else None)
+
         known = {d["sku"]: d for d in self.match.find({}, {"sku": 1, "found": 1, "last_tried_at": 1})}
-        out = []
+        quoted = {d["sku"]: d.get("fetched_at")
+                  for d in self.quotes.find({}, {"sku": 1, "fetched_at": 1})}
+
+        out: list[tuple[datetime, str]] = []
         for sku in all_skus:
             rec = known.get(sku)
+            fetched = quoted.get(sku)
             if rec is None:
-                out.append(sku)
+                out.append((datetime.min, sku))
             elif rec.get("found"):
-                out.append(sku)
+                if quote_cutoff and fetched and fetched >= quote_cutoff:
+                    continue                       # 报价还新鲜，本轮不浪费额度
+                out.append((fetched or datetime.min, sku))
             elif include_missed and (rec.get("last_tried_at") or datetime.min) < cutoff:
-                out.append(sku)
-        return out
+                out.append((rec.get("last_tried_at") or datetime.min, sku))
+
+        out.sort(key=lambda t: t[0])
+        return [sku for _, sku in out]
+
+    # ── 数据新鲜度 ────────────────────────────────────────────────────────
+    def quote_freshness(self) -> dict[str, Any]:
+        """得物报价的时间分布：最新/最旧/中位数，以及分桶计数。"""
+        from datetime import timedelta
+        now = datetime.utcnow()
+        total = self.quotes.count_documents({})
+        if not total:
+            return {"total": 0}
+
+        newest = self.quotes.find_one({}, {"fetched_at": 1}, sort=[("fetched_at", DESCENDING)])
+        oldest = self.quotes.find_one({}, {"fetched_at": 1}, sort=[("fetched_at", ASCENDING)])
+        buckets = {}
+        for label, days in (("d1", 1), ("d3", 3), ("d7", 7), ("d30", 30)):
+            buckets[label] = self.quotes.count_documents(
+                {"fetched_at": {"$gte": now - timedelta(days=days)}})
+        buckets["over30"] = total - buckets["d30"]
+        return {"total": total,
+                "newest": (newest or {}).get("fetched_at"),
+                "oldest": (oldest or {}).get("fetched_at"),
+                "buckets": buckets}
 
     # ── 套利结果 ──────────────────────────────────────────────────────────
     def replace_arbitrage(self, rows: list[dict]) -> int:
