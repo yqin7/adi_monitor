@@ -284,6 +284,16 @@ def parse_badges(badges: list | None) -> dict:
             "promo_unparsed": unparsed or None, **best}
 
 
+def _abs_url(link: str) -> str:
+    """Adidas 改版后 url 字段已是绝对地址，直接拼前缀会变成 https://www.adidas.comhttps://..."""
+    link = (link or "").strip()
+    if not link:
+        return ""
+    if link.startswith("http"):
+        return link
+    return "https://www.adidas.com" + (link if link.startswith("/") else "/" + link)
+
+
 def parse_product(p: dict, category: str) -> dict:
     prices = p.get("priceData", {}).get("prices", [])
     sale_price = orig_price = discount_pct = None
@@ -299,7 +309,7 @@ def parse_product(p: dict, category: str) -> dict:
         "name":              p.get("title", ""),
         "subtitle":          p.get("subTitle", ""),
         "category":          category,
-        "url":               "https://www.adidas.com" + p.get("url", ""),
+        "url":               _abs_url(p.get("url", "")),
         "sale_price":        sale_price,
         "orig_price":        orig_price,
         "discount_pct":      discount_pct,

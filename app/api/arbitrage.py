@@ -116,30 +116,33 @@ def fx():
 
     for name, url, pick in (
         ("open.er-api", "https://open.er-api.com/v6/latest/USD",
-         lambda d: (d["rates"]["CNY"], d["rates"]["HKD"], d["rates"]["KRW"],
-                    d.get("time_last_update_utc", ""))),
-        ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=CNY,HKD,KRW",
-         lambda d: (d["rates"]["CNY"], d["rates"]["HKD"], d["rates"]["KRW"],
-                    d.get("date", ""))),
+         lambda d: (d["rates"], d.get("time_last_update_utc", ""))),
+        ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=CNY,HKD,KRW,JPY,GBP,CAD,EUR",
+         lambda d: (d["rates"], d.get("date", ""))),
     ):
         try:
             d = requests.get(url, timeout=12).json()
-            cny, hkd, krw, ts = pick(d)
-            return {"source": name, "usd_cny": round(cny, 4), "usd_hkd": round(hkd, 4),
-                    "usd_krw": round(krw, 2),
-                    "krw_cny": round(cny / krw, 6),   # 韩元 -> 人民币
-                    "updated": ts, "live": True}
+            rates, ts = pick(d)
+            cny = rates["CNY"]
+            out = {"source": name, "updated": ts, "live": True,
+                   "usd_cny": round(cny, 4), "usd_hkd": round(rates["HKD"], 4)}
+            # 各站本币 -> 人民币，供前端按 site 取用
+            for cur in ("KRW", "JPY", "GBP", "CAD", "EUR"):
+                if cur in rates and rates[cur]:
+                    out[f"{cur.lower()}_cny"] = round(cny / rates[cur], 6)
+                    out[f"usd_{cur.lower()}"] = round(rates[cur], 4)
+            out["usd_cny_rate"] = round(cny, 4)
+            return out
         except Exception:
             continue
 
     cfg = get_pricing_config(load_config())["fx"]
     return {"source": "config", "usd_cny": cfg["usd_cny"], "usd_hkd": cfg["usd_hkd"],
-            "usd_krw": None, "krw_cny": cfg.get("krw_cny", 0.0052),
-            "updated": "", "live": False}
+            "krw_cny": cfg.get("krw_cny", 0.0052), "updated": "", "live": False}
 
 
 @router.get("/raw", summary="尺码级原始数据（供前端自行试算）")
-def raw(site: str = Query("us", description="us 美国站 | kr 韩国站"),
+def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 | gb 英国 | ca 加拿大"),
         min_sales: int = Query(0, ge=0), limit: int = Query(8000, ge=1, le=30000)):
     """返回计算利润所需的原始字段，不做任何费用假设。
 
@@ -181,12 +184,17 @@ def raw(site: str = Query("us", description="us 美国站 | kr 韩国站"),
                 "in_stock": in_stock(s.get("size"), p.get("available_sizes")),
                 "list_usd": p.get("orig_price"), "price_usd": usd,
                 "promo_code": p.get("promo_code"), "promo_rate": p.get("promo_rate"),
-                "dewu_price": price, "monthly_sales": s.get("globalSoldNum30"),
+                # 得物接口返回的就是【香港报价】，结算单位人民币(RMB)。
+                # 国内报价 = 香港报价 × 1.09（电商税），由前端换算。
+                "dewu_price": price,
+                "monthly_sales": s.get("globalSoldNum30"),
                 "sales_mom": s.get("globalMonthToMonthRatio"),
                 "global_sku_id": s.get("globalSkuId"),
             })
             if len(rows) >= limit:
                 break
 
-    fees = get_pricing_config(load_config())["sell_cn"]
-    return {"site": site, "count": len(rows), "sell_cn_fees": fees, "items": rows}
+    cfg = get_pricing_config(load_config())
+    return {"site": site, "count": len(rows),
+            "sell_cn_fees": cfg["sell_cn"], "sell_hk_fees": cfg["sell_hk"],
+            "items": rows}

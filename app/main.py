@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.paths import PROJECT_ROOT
-from app.api import system, products, scan, watch, notifications, config_router, arbitrage
+from app.api import system, products, scan, watch, notifications, config_router, arbitrage, jobs
 
 # ===== 日志配置 =====
 logging.basicConfig(
@@ -41,6 +41,7 @@ app.include_router(watch.router)
 app.include_router(notifications.router)
 app.include_router(config_router.router)
 app.include_router(arbitrage.router)
+app.include_router(jobs.router)
 
 _STATIC = PROJECT_ROOT / "app" / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
@@ -48,8 +49,15 @@ app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 
 @app.get("/ui", include_in_schema=False)
 def ui():
-    """比价结果网页"""
-    return FileResponse(str(_STATIC / "index.html"))
+    """比价结果网页。
+
+    页面改动频繁，禁用浏览器缓存，避免用户看到旧版本还以为改动没生效。
+    """
+    return FileResponse(
+        str(_STATIC / "index.html"),
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate",
+                 "Pragma": "no-cache", "Expires": "0"},
+    )
 
 
 @app.on_event("startup")

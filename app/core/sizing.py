@@ -63,19 +63,64 @@ def _clean(raw: str) -> str:
     return s
 
 
+# adidas 美码(男) -> 毫米。女码比男码大 1.5 档，故 "M 10 / W 11.5" 取男码即可。
+US_M_TO_MM = {
+    "4": 220, "4.5": 225, "5": 230, "5.5": 235, "6": 240, "6.5": 245,
+    "7": 250, "7.5": 255, "8": 260, "8.5": 265, "9": 270, "9.5": 275,
+    "10": 280, "10.5": 285, "11": 290, "11.5": 295, "12": 300, "12.5": 305,
+    "13": 310, "13.5": 315, "14": 320, "15": 330, "16": 340,
+}
+
+# adidas 英码(UK,男) -> 毫米。UK = US − 0.5
+UK_TO_MM = {
+    "3": 220, "3.5": 225, "4": 230, "4.5": 235, "5": 240, "5.5": 245,
+    "6": 250, "6.5": 255, "7": 260, "7.5": 265, "8": 270, "8.5": 275,
+    "9": 280, "9.5": 285, "10": 290, "10.5": 295, "11": 300, "11.5": 305,
+    "12": 310, "12.5": 315, "13": 320, "14": 330, "15": 340,
+}
+
+_JP_CM = re.compile(r"^([\d.]+)\s*CM$", re.I)          # 日本站 "27.5cm"
+_UK_ONLY = re.compile(r"^UK\s*([\d.]+)$", re.I)
+_US_COMBO = re.compile(r"^M\s*([\d.]+)\s*/\s*W\s*[\d.]+$", re.I)
+_US_ONLY = re.compile(r"^(?:M|US)\s*([\d.]+)$", re.I)
+
+
 def normalize(raw: str) -> tuple[str, str | int] | None:
     """任意平台的尺码字符串 -> 内部规范码。无法识别返回 None。"""
     s = _clean(raw)
     if not s or s in ("HIDDEN", "-"):
         return None
 
+    # 0a) 日本站 "27.5cm" -> 毫米
+    m = _JP_CM.match(s)
+    if m:
+        try:
+            return ("shoe", int(round(float(m.group(1)) * 10)))
+        except ValueError:
+            return None
+
+    # 0b) 英国站 "UK 9"（裸数字英码在下面按上下文处理）
+    m = _UK_ONLY.match(s)
+    if m:
+        mm = UK_TO_MM.get(m.group(1))
+        return ("shoe", mm) if mm else None
+
+    # 0c) 美国站复合尺码 "M 10 / W 11" 或 "M 10"
+    m = _US_COMBO.match(s) or _US_ONLY.match(s)
+    if m:
+        mm = US_M_TO_MM.get(m.group(1))
+        return ("shoe", mm) if mm else None
+
     # 1) 纯数字：毫米（韩国站 200~360）或 EU 整码（35~50）
-    if re.fullmatch(r"\d{2,3}", s):
+    if re.fullmatch(r"\d{1,3}", s):
         n = int(s)
-        if 200 <= n <= 360:
+        if 200 <= n <= 360:                 # 韩国站毫米
             return ("shoe", n)
-        if 34 <= n <= 52:
+        if 34 <= n <= 52:                   # EU 整码
             mm = EU_TO_MM.get(s)
+            return ("shoe", mm) if mm else None
+        if 1 <= n <= 15:                    # 英国站裸英码
+            mm = UK_TO_MM.get(s)
             return ("shoe", mm) if mm else None
         return None
 
@@ -86,8 +131,14 @@ def normalize(raw: str) -> tuple[str, str | int] | None:
 
     # 3) US 码：US 9.5 / 9.5（服装不会出现小数，故小数视为 US 鞋码）
     m = re.fullmatch(r"(?:US\s*)?(\d{1,2}(?:\.5)?)", s)
-    if m and ("." in m.group(1) or s.startswith("US")):
-        return ("shoe_us", float(m.group(1)))
+    if m:
+        v = m.group(1)
+        if s.startswith("US"):
+            mm = US_M_TO_MM.get(v)
+            return ("shoe", mm) if mm else None
+        if "." in v:                        # 英国站 "9.5"
+            mm = UK_TO_MM.get(v)
+            return ("shoe", mm) if mm else None
 
     # 4) 服装
     key = s.replace(" ", "")
@@ -97,8 +148,12 @@ def normalize(raw: str) -> tuple[str, str | int] | None:
     return None
 
 
-def sizes_match(a: str, b: str, tolerance_mm: int = 3) -> bool:
-    """两个尺码是否指同一档。鞋按毫米比（允许 ±tolerance，吸收三分制取整误差）。"""
+def sizes_match(a: str, b: str, tolerance_mm: int = 6) -> bool:
+    """两个尺码是否指同一档。
+
+    鞋按毫米比，容差 ±6mm：EU 三分制取整有 2~3mm 误差，
+    日码(cm)按鞋楦长标注、比 EU 对照毫米小 5mm 左右，都要能吸收。
+    """
     na, nb = normalize(a), normalize(b)
     if not na or not nb:
         return False
@@ -109,7 +164,7 @@ def sizes_match(a: str, b: str, tolerance_mm: int = 3) -> bool:
     return False
 
 
-def in_stock(dewu_size: str, available: Iterable[str], tolerance_mm: int = 3) -> bool | None:
+def in_stock(dewu_size: str, available: Iterable[str], tolerance_mm: int = 6) -> bool | None:
     """得物的某个尺码，在 Adidas 侧是否有货。
 
     available 为空/缺失时返回 None（未知），不要当成「无货」——

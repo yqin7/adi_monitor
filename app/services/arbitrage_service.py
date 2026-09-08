@@ -23,7 +23,11 @@ from app.dao.mongo_client import MongoConnection
 
 log = logging.getLogger(__name__)
 
-QUOTE_WORKERS = 2          # 得物查询并发（实测 6 会触发 400010007 调用频次超限）
+# 得物并发压测（24 批 × 20 id）：
+#   并发 2 -> 57 批/分钟，0 限流      并发 4 -> 116 批/分钟，0 限流
+#   并发 6 -> 180 批/分钟，17% 限流   并发 8 -> 258 批/分钟，37% 限流
+# 取 4：吞吐翻倍且不触发 400010007。
+QUOTE_WORKERS = 4
 RATE_LIMIT_CODE = "400010007"
 MAX_RETRIES = 4
 BACKOFF_BASE = 2.0         # 秒，指数退避
@@ -49,14 +53,42 @@ def _fetch_one(sku: str, region: str, currency: str) -> tuple[str, dict | None, 
     return sku, None, True
 
 
+def _catalog_one(sku: str) -> tuple[str, dict | None, bool]:
+    """接口140：货号 -> 各尺码 globalSkuId。返回 (sku, info, 是否失败)。"""
+    for attempt in range(MAX_RETRIES):
+        try:
+            info = dc.get_skus_by_article(sku, region=dc.CATALOG_REGION)
+            return sku, (info or None), False
+        except Exception as exc:
+            msg = str(exc)
+            if RATE_LIMIT_CODE in msg and attempt < MAX_RETRIES - 1:
+                time.sleep(BACKOFF_BASE * (2 ** attempt))
+                continue
+            log.warning("目录查询失败 %s: %s", sku, msg[:90])
+            return sku, None, True
+    return sku, None, True
+
+
+def _chunk(seq: list, n: int):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
 def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                    include_missed: bool = False, site: str | None = None,
                    region: str = "CN", currency: str = "CNY",
-                   progress: Callable[[str], None] | None = None) -> dict[str, Any]:
+                   progress: Callable[[str], None] | None = None,
+                   should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
     """拉取得物报价并落库。
 
-    only_discounted : 只查 Adidas 在打折的商品（套利机会主要来源）
-    include_missed  : 是否重试历史未命中的货号（默认跳过，按冷却期轮换）
+    三阶段，相比逐货号 3 次调用可省下大部分请求：
+      1. 目录 —— 只查 dewu_sku_map 里没有/已过期的货号（接口140，一次一个货号）
+      2. 行情 —— 把所有货号的 globalSkuId 汇总后按 20 个一批（接口141/159 的上限）
+                 跨货号攒批，避免每个货号只塞 7 个 id 就发一次
+      3. 落库 —— 按货号拼回并写 dewu_quotes
+
+    only_discounted : 只查 Adidas 在打折的商品
+    include_missed  : 是否重试历史未命中的货号
     """
     def report(msg: str) -> None:
         log.info(msg)
@@ -73,32 +105,117 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         q["sale_price"] = {"$ne": None}
     if site:
         q["site"] = site
-    all_skus = [d["sku"] for d in conn.db["products"].find(q, {"sku": 1})]
+    all_skus = sorted({d["sku"] for d in conn.db["products"].find(q, {"sku": 1})})
     targets = dao.skus_to_refresh(all_skus, include_missed=include_missed)
     if limit:
         targets = targets[:limit]
 
-    report(f"候选 {len(all_skus)} 个，本轮查询 {len(targets)} 个（并发 {QUOTE_WORKERS}）")
+    # ── 阶段1：目录（能用缓存就不调接口）────────────────────────────────
+    cached = dao.load_sku_maps(targets)
+    todo = [s for s in targets if s not in cached]
+    report(f"候选 {len(all_skus)}，本轮 {len(targets)}；目录缓存命中 {len(cached)}，"
+           f"需拉取 {len(todo)}")
 
-    hit = miss = errors = 0
-    with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
-        futures = {ex.submit(_fetch_one, s, region, currency): s for s in targets}
-        for i, fut in enumerate(as_completed(futures), 1):
-            sku, data, failed = fut.result()
-            if data:
-                dao.save_quote(sku, data)
-                dao.mark_match(sku, True)
-                hit += 1
-            elif failed:
-                errors += 1          # 查询本身失败，不标记未命中，下轮重试
-            else:
-                dao.mark_match(sku, False)
-                miss += 1
-            if i % 50 == 0:
-                report(f"  进度 {i}/{len(targets)}  命中 {hit}  未命中 {miss}  失败 {errors}")
+    catalogs: dict[str, dict] = {s: cached[s] for s in cached}
+    miss = errors = 0
+    if todo:
+        with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
+            futures = [ex.submit(_catalog_one, s) for s in todo]
+            for i, fut in enumerate(as_completed(futures), 1):
+                if should_stop and should_stop():
+                    report("已请求停止，跳过剩余目录查询")
+                    for f in futures:
+                        f.cancel()
+                    break
+                sku, info, failed = fut.result()
+                if info:
+                    dao.save_sku_map(sku, info)
+                    dao.mark_match(sku, True)
+                    catalogs[sku] = info
+                elif failed:
+                    errors += 1          # 查询失败，不标未命中，下轮重试
+                else:
+                    dao.mark_match(sku, False)
+                    miss += 1
+                if i % 200 == 0:
+                    report(f"  目录 {i}/{len(todo)}  命中 {len(catalogs)}  "
+                           f"未命中 {miss}  失败 {errors}")
 
-    report(f"报价补全完成：命中 {hit}，未命中 {miss}，失败 {errors}")
-    return {"queried": len(targets), "hit": hit, "miss": miss, "errors": errors}
+    # ── 阶段2：分组攒批查行情，边查边落库 ──────────────────────────────
+    # 每 SAVE_EVERY 个货号为一组：组内 skuId 攒成 20 个一批查价格/销量，
+    # 查完立即写 dewu_quotes。这样中途看得到增长，进程中断也不会全废。
+    SAVE_EVERY = 200
+    skus_sorted = sorted(catalogs)
+    total_ids = sum(len(catalogs[s].get("skus", [])) for s in skus_sorted)
+    report(f"行情：{len(catalogs)} 个货号 / {total_ids} 个 skuId，"
+           f"每 {SAVE_EVERY} 个货号一组落库")
+
+    def _retrying(fn, c, tag):
+        for attempt in range(MAX_RETRIES):
+            try:
+                return fn(c)
+            except Exception as e:
+                msg = str(e)
+                if RATE_LIMIT_CODE in msg and attempt < MAX_RETRIES - 1:
+                    time.sleep(BACKOFF_BASE * (2 ** attempt))
+                    continue
+                log.warning("%s失败: %s", tag, msg[:80])
+                return {}
+        return {}
+
+    def _price(c):
+        return _retrying(lambda x: dc.batch_price(x, region=region, currency=currency),
+                         c, "批量价格")
+
+    def _sales(c):
+        return _retrying(dc.batch_sales, c, "批量销量")
+
+    saved = 0
+    for gi in range(0, len(skus_sorted), SAVE_EVERY):
+        if should_stop and should_stop():
+            report(f"已请求停止，已落库 {saved} 个货号")
+            break
+        group = skus_sorted[gi:gi + SAVE_EVERY]
+        id_to_sku: dict[int, str] = {}
+        for sku in group:
+            for s in catalogs[sku].get("skus", []):
+                gid = s.get("globalSkuId")
+                if gid:
+                    id_to_sku[int(gid)] = sku
+        chunks = list(_chunk(list(id_to_sku), 20))
+        if not chunks:
+            continue
+
+        prices: dict[int, dict] = {}
+        sales: dict[int, dict] = {}
+        with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
+            for r in ex.map(_price, chunks):
+                prices.update(r)
+        with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
+            for r in ex.map(_sales, chunks):
+                sales.update(r)
+
+        for sku in group:
+            info = catalogs[sku]
+            sizes = []
+            for s in info.get("skus", []):
+                gid = s.get("globalSkuId")
+                sizes.append({"size": s.get("size"), "globalSkuId": gid,
+                              **prices.get(gid, {}), **sales.get(gid, {})})
+            payload = {k: v for k, v in info.items()
+                       if k not in ("skus", "_id", "fetched_at")}
+            payload.update({
+                "found": True, "region": region, "currency": currency,
+                "country": region, "sizes": sizes,
+                "totalSoldNum30": sum(x.get("globalSoldNum30") or 0 for x in sizes),
+            })
+            dao.save_quote(sku, payload)
+            saved += 1
+        report(f"  已落库 {saved}/{len(catalogs)} 个货号")
+
+    report(f"报价补全完成：命中 {saved}，未命中 {miss}，失败 {errors}")
+    return {"queried": len(targets), "hit": saved, "miss": miss, "errors": errors,
+            "catalog_cached": len(cached)}
 
 
 def compute(*, market: str = "CN", apply_filter: bool = True,

@@ -16,7 +16,7 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);
        font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
-  .wrap{max-width:1400px;margin:0 auto;padding:22px 16px 70px}
+  .wrap{max-width:100%;margin:0 auto;padding:18px 14px 60px}
   h1{font-size:20px;margin:0 0 3px}
   .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
   .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;
@@ -39,7 +39,9 @@
     opacity:0;visibility:hidden;transition:opacity .12s;z-index:5}
   .f label.tip:hover::after,.f label.tip:hover::before{opacity:1;visibility:visible}
   input,select{background:var(--bg);color:var(--text);border:1px solid var(--line);
-               border-radius:7px;padding:6px 9px;font-size:13px;width:112px}
+               border-radius:7px;padding:6px 8px;font-size:13px;width:96px}
+  #ship,#tax,#rakuten,#rmn,#bank{width:74px}
+  #fx{width:104px}
   input:focus{outline:2px solid var(--accent);outline-offset:-1px}
   button{background:var(--accent);color:var(--bg);border:0;border-radius:7px;
          padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer}
@@ -51,16 +53,30 @@
   .stat .k{color:var(--muted);font-size:12px}
   .stat .v{font-size:19px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
   .tablewrap{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
-  table{width:100%;border-collapse:collapse;min-width:1120px}
-  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  table{width:100%;border-collapse:collapse;min-width:0;table-layout:auto;font-size:12.5px}
+  th,td{padding:7px 5px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{padding-left:11px}
+  th:last-child,td:last-child{padding-right:11px}
   th{font-size:12px;color:var(--muted);font-weight:600;position:sticky;top:0;
      background:var(--card);cursor:pointer;user-select:none;z-index:1}
   th.on{color:var(--text)}
-  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  th.nosort{cursor:default}
+  select.hsel{width:auto;min-width:56px;padding:2px 18px 2px 5px;font-size:12px;
+              font-weight:600;color:var(--muted);background:transparent;border:0;
+              cursor:pointer;appearance:none;
+              background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
+                               linear-gradient(135deg,currentColor 50%,transparent 50%);
+              background-position:calc(100% - 9px) 55%,calc(100% - 5px) 55%;
+              background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+  select.hsel:hover{color:var(--text)}
+  select.hsel.active{color:var(--text);background-color:rgba(99,132,255,.16);border-radius:4px}
+  select.hsel option{background:var(--card);color:var(--text);font-weight:400}
+  th.num,td.num{text-align:right}
+  td.num{font-variant-numeric:tabular-nums}
   tbody tr:hover{background:rgba(127,127,127,.06)}
   .pos{color:var(--pos);font-weight:600}
   .neg{color:var(--neg)}
-  .name{max-width:290px;overflow:hidden;text-overflow:ellipsis}
+  .name{max-width:150px;overflow:hidden;text-overflow:ellipsis}
   .cat{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;
        font-size:11px;background:rgba(99,132,255,.16);color:var(--muted)}
   .stk{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px}
@@ -68,15 +84,29 @@
   .stk.ok{background:rgba(16,160,80,.18);color:var(--pos)}
   .stk.no{background:rgba(200,50,40,.16);color:var(--neg)}
   .sku{font-family:ui-monospace,Menlo,monospace;font-size:12px}
-  .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;
+  .tag{display:inline-block;padding:1px 5px;border-radius:4px;font-size:11px;
        background:rgba(127,127,127,.15);color:var(--muted)}
-  .code{background:var(--hl);color:var(--text);padding:1px 5px;border-radius:4px;
-        font-size:11px;font-family:ui-monospace,Menlo,monospace}
-  input.ov{width:66px;padding:3px 6px;font-size:12px;background:transparent;
+  th.tight,td.tight{width:1%;white-space:nowrap}
+  .code{background:var(--hl);color:var(--text);padding:1px 4px;border-radius:4px;
+        font-size:10.5px;font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+  input.ov{width:44px;padding:2px 4px;font-size:11.5px;text-align:right;background:transparent;
            border:1px dashed var(--line)}
   input.ov:focus{background:var(--bg);border-style:solid}
   input.ov.set{background:var(--hl);border-style:solid;font-weight:600}
   .empty{padding:44px;text-align:center;color:var(--muted)}
+  .jobinfo{margin-left:auto;font-size:12.5px;color:var(--muted);text-align:right}
+  .jobinfo .run{color:var(--pos);font-weight:600}
+  .jobinfo .err{color:var(--neg);font-weight:600}
+  .joblog{margin:12px 0 0;padding:10px 12px;max-height:280px;overflow:auto;
+          background:var(--bg);border:1px solid var(--line);border-radius:8px;
+          font:11.5px/1.55 ui-monospace,Menlo,Consolas,monospace;
+          white-space:pre-wrap;word-break:break-all;color:var(--muted)}
+  button.job:disabled{opacity:.4;cursor:not-allowed}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:center;
+         margin:10px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
+  .pager button{padding:5px 12px;font-size:12.5px}
+  .pager button:disabled{opacity:.35;cursor:not-allowed}
+  .pager select{width:auto;padding:5px 8px;font-size:12.5px}
   .fx{font-size:12px;color:var(--muted);margin-left:auto;text-align:right}
   .tabs{display:flex;gap:6px;margin-bottom:14px}
   .tabs button{background:transparent;color:var(--muted);border:1px solid var(--line);
@@ -91,8 +121,26 @@
   <div class="sub">填入你的返利与运费，回车即刻重算利润</div>
 
   <div class="tabs">
-    <button id="tabUs" class="active" data-site="us">🇺🇸 美国站</button>
-    <button id="tabKr" data-site="kr">🇰🇷 韩国站</button>
+    <button class="active" data-site="us">🇺🇸 美国</button>
+    <button data-site="kr">🇰🇷 韩国</button>
+    <button data-site="jp">🇯🇵 日本</button>
+    <button data-site="gb">🇬🇧 英国</button>
+    <button data-site="ca">🇨🇦 加拿大</button>
+  </div>
+
+  <div class="panel">
+    <h2>数据任务</h2>
+    <div class="grid" style="align-items:center">
+      <button class="job" data-job="all">全流程</button>
+      <button class="job ghost" data-job="adidas">只抓 Adidas</button>
+      <button class="job ghost" data-job="dewu">只查得物</button>
+      <button class="job ghost" data-job="dewu-retry">重查未命中</button>
+      <button class="job ghost" data-job="compute">只算利润</button>
+      <button class="ghost" id="jobCancel" hidden>停止</button>
+      <button class="ghost" id="logToggle">日志</button>
+      <span class="jobinfo" id="jobInfo">空闲</span>
+    </div>
+    <pre class="joblog" id="jobLog" hidden></pre>
   </div>
 
   <div class="panel">
@@ -116,11 +164,18 @@
     <h2>筛选与排序</h2>
     <div class="grid">
       <div class="f"><label>排序</label>
-        <select id="sortBy"><option value="profit">净利</option><option value="roi">利润率 ROI</option>
-          <option value="monthly_sales">30天销量</option></select></div>
+        <select id="sortBy"><option value="profit_cn">国内净利</option>
+          <option value="profit_hk">香港净利</option>
+          <option value="profit">净利(较优)</option>
+          <option value="roi">利润率 ROI</option>
+          <option value="monthly_sales">月销</option></select></div>
       <div class="f"><label>最低月销</label><input id="minSales" type="number" value="20"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤，负利润也显示">最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤">最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
+      <div class="f"><label>香港到手</label>
+        <select id="posHk"><option value="0">全部</option><option value="1">仅利润为正</option></select></div>
+      <div class="f"><label>国内到手</label>
+        <select id="posCn"><option value="0">全部</option><option value="1">仅利润为正</option></select></div>
       <div class="f"><label class="tip" data-tip="仅韩国站能拿到尺码库存；美国站无此数据，勾选后会全部过滤掉">只显示有货</label>
         <select id="stockOnly"><option value="0">全部</option><option value="1">仅有货</option></select></div>
       <div class="f"><label>&nbsp;</label><button class="ghost" id="reset">重置</button></div>
@@ -131,44 +186,54 @@
 
   <div class="stats" id="stats"></div>
 
+  <div class="pager" id="pagerTop"></div>
   <div class="tablewrap">
     <table>
       <thead><tr>
         <th data-k="sku">货号</th><th>名称</th>
-        <th data-k="category">类别</th>
-        <th>尺码</th>
-        <th data-k="in_stock">库存</th>
+        <th class="tight nosort"><select id="catFilter" class="hsel"><option value="">类别</option></select></th>
+        <th class="tight">尺码</th>
+        <th class="tight" data-k="in_stock">库存</th>
         <th>促销码</th>
-        <th title="留空则用商品自带折扣">折扣<br><span style="font-weight:400;opacity:.6">如 0.7</span></th>
-        <th title="留空则用上方统一运费">运费 ¥</th>
-        <th data-k="price_usd" class="num" id="thPrice">Adidas 售价 $</th>
+        <th class="num tight" title="留空则用商品自带折扣">折扣</th>
+        <th class="num tight" title="留空则用上方统一运费">运费</th>
+        <th data-k="price_usd" class="num" id="thPrice">售价 $</th>
         <th data-k="net_usd" class="num" id="thNet" title="货款实付，不含运费">货款 $</th>
-        <th data-k="cost_cny" class="num" title="货款折人民币 + 运费">总成本 ¥</th>
-        <th data-k="dewu_price" class="num">得物价 ¥</th>
-        <th data-k="payout" class="num">得物到手 ¥</th>
-        <th data-k="profit" class="num">净利 ¥</th>
-        <th data-k="roi" class="num">ROI</th>
-        <th data-k="monthly_sales" class="num">30天销量</th>
+        <th data-k="cost_cny" class="num" id="thCost" title="货款折算 + 运费">成本 ¥</th>
+        <th data-k="hk_price" class="num" title="得物API查到的香港报价，人民币结算">香港 ¥</th>
+        <th data-k="payout_hk" class="num" title="香港报价 − max(5%,18) − 操作费(<350收44/≥350收62) − 1%转账">香港到手</th>
+        <th data-k="cn_price" class="num" title="香港价 × 1.09（电商税）">国内 ¥</th>
+        <th data-k="payout_cn" class="num" title="国内价 × (1−5%−1%−2.5%) − 38 − 10">国内到手</th>
+        <th data-k="profit_hk" class="num">香港净利</th>
+        <th data-k="profit_cn" class="num">国内净利</th>
+        <th data-k="roi" class="num" title="取两边较优">ROI</th>
+        <th data-k="monthly_sales" class="num">月销</th>
         <th class="num">环比</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
+    <div class="empty" id="loading" hidden>加载中…</div>
     <div class="empty" id="empty" hidden>暂无数据</div>
   </div>
+  <div class="pager" id="pagerBottom"></div>
 </div>
 
 <script>
 const $ = s => document.querySelector(s);
-let RAW = [], FEES = null, sortBy = 'profit', order = 'desc';
-let SITE = 'us', FX = null;
+let RAW = [], FEES = null, FEES_HK = null, sortBy = 'profit_cn', order = 'desc';
+let SITE = 'us', FX = null, loadSeq = 0;
+let page = 0, pageSize = 100, lastRows = [];
 const CAT = {
   'men-shoes':'男鞋', 'women-shoes':'女鞋', 'kids-shoes':'童鞋',
   'men-clothing':'男装', 'women-clothing':'女装', 'kids-clothing':'童装',
   'accessories':'配件', 'sale':'特价',
 };
 const CFG = {
-  us: {cur:'$', fxKey:'usd_cny', fxLabel:'汇率 USD→CNY', rmn:true,  step:'0.0001'},
-  kr: {cur:'₩', fxKey:'krw_cny', fxLabel:'汇率 KRW→CNY', rmn:false, step:'0.000001'},
+  us: {cur:'$',  fxKey:'usd_cny', fxLabel:'汇率 USD→CNY', rmn:true,  step:'0.0001'},
+  kr: {cur:'₩',  fxKey:'krw_cny', fxLabel:'汇率 KRW→CNY', rmn:false, step:'0.000001'},
+  jp: {cur:'¥',  fxKey:'jpy_cny', fxLabel:'汇率 JPY→CNY', rmn:false, step:'0.000001'},
+  gb: {cur:'£',  fxKey:'gbp_cny', fxLabel:'汇率 GBP→CNY', rmn:false, step:'0.0001'},
+  ca: {cur:'C$', fxKey:'cad_cny', fxLabel:'汇率 CAD→CNY', rmn:false, step:'0.0001'},
 };
 /* 单品级覆盖：{ sku: {promo: 0.7, ship: 3.5} }，存 localStorage，刷新不丢 */
 let OVERRIDES = {};
@@ -202,15 +267,41 @@ function calc(r) {
   const shipCny = ov.ship != null ? ov.ship : num('ship');
   const costCny = netUsd * num('fx') + shipCny;        // 到岸总成本
 
+  // ── 得物到手价：国内 / 香港两套口径同时计算，并列展示 ────────────────
+  // 接口查到的 dewu_price 就是【香港报价】，结算单位人民币；
+  // 国内报价 = 香港报价 × 1.09（电商税差）。两边全程人民币计价。
+  const hkPrice = r.dewu_price;
+
+  // 香港：技术服务费 5%（最低18 HKD）、操作服务费按 350 HKD 分档 44/62 HKD、银行转账 1%
+  // 注意：阈值与固定费均以【港币】计价，而报价是人民币结算，需按 HKD→CNY 折算后再比。
+  const h = FEES_HK || {tech_fee_rate:0.05, tech_fee_min:18, transfer_fee_rate:0.01,
+                        threshold:350, operate_fee_low:44, operate_fee_high:62};
+  const hkd2cny = (FX && FX.usd_hkd) ? FX.usd_cny / FX.usd_hkd : 0.857;
+  const hkTech = Math.max(hkPrice * h.tech_fee_rate, h.tech_fee_min * hkd2cny);
+  const hkOperate = (hkPrice < h.threshold * hkd2cny
+                     ? h.operate_fee_low : h.operate_fee_high) * hkd2cny;
+  const payoutHk = hkPrice - hkTech - hkOperate - hkPrice * h.transfer_fee_rate;
+
+  // 国内：香港报价×1.09 为成交基数，扣 技术5%+转账1%+售后无忧2.5% + 操作38 + 邮费补贴10
   const f = FEES || {tax_rate:0.09, tech_fee_rate:0.05, transfer_fee_rate:0.01,
                      after_sale_rate:0.025, operate_fee:38, postage_subsidy:10};
-  const base = r.dewu_price * (1 + f.tax_rate);
-  const payout = base * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)
-                 - f.operate_fee - f.postage_subsidy;
+  const cnPrice = hkPrice * (1 + f.tax_rate);
+  const payoutCn = cnPrice * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)
+                   - f.operate_fee - f.postage_subsidy;
 
-  const profit = payout - costCny;
+  const costLocal = costCny;
+  const profitCn = payoutCn - costLocal;
+  const profitHk = payoutHk - costLocal;
+  // 排序/筛选以「更优的一边」为准
+  const profit = Math.max(profitCn, profitHk);
   return {...r, after_promo: afterPromo, cashback, net_usd: netUsd, ship_cny: shipCny,
-          cost_cny: costCny, payout, profit, roi: costCny ? profit / costCny : 0};
+          hk_price: hkPrice, cn_price: cnPrice,
+          payout_hk: payoutHk, payout_cn: payoutCn,
+          profit_hk: profitHk, profit_cn: profitCn,
+          cost_cny: costLocal, payout: payoutCn, profit,
+          roi_cn: costLocal ? profitCn / costLocal : 0,
+          roi_hk: costLocal ? profitHk / costLocal : 0,
+          roi: costLocal ? profit / costLocal : 0};
 }
 
 /* 该商品当前生效的折扣（不含单品覆盖），用于输入框占位提示 */
@@ -219,16 +310,55 @@ function effPromo(r) {
   return gp !== '' ? Number(gp) : (r.promo_rate ?? 1);
 }
 
+function fillCategories() {
+  const sel = $('#catFilter'), keep = sel.value;
+  const cats = [...new Set(RAW.map(r => r.category).filter(Boolean))]
+    .sort((a, b) => (CAT[a] || a).localeCompare(CAT[b] || b, 'zh'));
+  sel.innerHTML = '<option value="">类别（全部）</option>' +
+    cats.map(c => `<option value="${c}">${CAT[c] || c}</option>`).join('');
+  sel.value = cats.includes(keep) ? keep : '';
+  sel.classList.toggle('active', !!sel.value);
+}
+
+function renderPager(total) {
+  const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  const from = total ? page * pageSize + 1 : 0;
+  const to = Math.min((page + 1) * pageSize, total);
+  const html = `
+    <button class="ghost" data-p="0" ${page === 0 ? 'disabled' : ''}>« 首页</button>
+    <button class="ghost" data-p="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹ 上一页</button>
+    <span>${fmt(from)}–${fmt(to)} / 共 ${fmt(total)} 条 · 第 ${page + 1}/${maxPage + 1} 页</span>
+    <button class="ghost" data-p="${page + 1}" ${page >= maxPage ? 'disabled' : ''}>下一页 ›</button>
+    <button class="ghost" data-p="${maxPage}" ${page >= maxPage ? 'disabled' : ''}>末页 »</button>
+    <select id="pageSize">${[50, 100, 200, 500].map(v =>
+      `<option value="${v}"${v === pageSize ? ' selected' : ''}>${v} 条/页</option>`).join('')}</select>`;
+  ['#pagerTop', '#pagerBottom'].forEach(sel => { $(sel).innerHTML = html; });
+  document.querySelectorAll('.pager button[data-p]').forEach(b => b.onclick = () => {
+    page = Number(b.dataset.p); render();
+    document.querySelector('.tablewrap').scrollIntoView({block: 'start'});
+  });
+  document.querySelectorAll('.pager #pageSize').forEach(s => s.onchange = e => {
+    pageSize = Number(e.target.value); page = 0; render();
+  });
+}
+
 function render() {
   const minSales = num('minSales');
   const minProfit = lim('minProfit');
   const minRoiPct = lim('minRoi');
   const stockOnly = $('#stockOnly').value === '1';
+  const posHk = $('#posHk').value === '1';
+  const posCn = $('#posCn').value === '1';
+  const cat = $('#catFilter').value;
   let rows = RAW.map(calc).filter(r =>
-    (r.monthly_sales || 0) >= minSales
+    r.payout != null                       // 该市场没有报价的行不参与
+    && (r.monthly_sales || 0) >= minSales
     && (minProfit === null || r.profit >= minProfit)
     && (minRoiPct === null || r.roi >= minRoiPct / 100)
-    && (!stockOnly || r.in_stock === true));
+    && (!stockOnly || r.in_stock === true)
+    && (!posHk || r.profit_hk > 0)
+    && (!posCn || r.profit_cn > 0)
+    && (!cat || r.category === cat));
 
   const dir = order === 'desc' ? -1 : 1;
   rows.sort((a, b) => {
@@ -246,7 +376,11 @@ function render() {
   ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`).join('');
 
   $('#empty').hidden = rows.length > 0;
-  $('#rows').innerHTML = rows.slice(0, 500).map(r => {
+  lastRows = rows;
+  const maxPage = Math.max(0, Math.ceil(rows.length / pageSize) - 1);
+  if (page > maxPage) page = maxPage;
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
+  $('#rows').innerHTML = pageRows.map(r => {
     const cls = r.profit > 0 ? 'pos' : 'neg';
     const mom = r.sales_mom == null ? '—'
       : (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom * 100).toFixed(1) + '%';
@@ -259,22 +393,25 @@ function render() {
       <td class="sku">${link}</td>
       <td class="name" title="${(r.name || '').replace(/"/g, '&quot;')}">${r.name || '—'}</td>
       <td><span class="cat">${CAT[r.category] || r.category || '—'}</span></td>
-      <td><span class="tag">${r.size ?? '—'}</span></td>
-      <td>${
+      <td class="tight"><span class="tag">${r.size ?? '—'}</span></td>
+      <td class="tight">${
         r.in_stock === true ? '<span class="stk ok">有货</span>'
       : r.in_stock === false ? '<span class="stk no">断码</span>'
       : '<span class="stk unk" title="该站点无尺码库存数据">—</span>'}</td>
       <td>${code}</td>
-      <td><input class="ov" data-f="promo" data-sku="${r.sku}" type="number" step="0.01"
+      <td class="num"><input class="ov" data-f="promo" data-sku="${r.sku}" type="number" step="0.01"
                  min="0" max="1" value="${ov.promo ?? ''}" placeholder="${effPromo(r).toFixed(2)}"></td>
-      <td><input class="ov" data-f="ship" data-sku="${r.sku}" type="number" step="0.1"
+      <td class="num"><input class="ov" data-f="ship" data-sku="${r.sku}" type="number" step="0.1"
                  min="0" value="${ov.ship ?? ''}" placeholder="${num('ship')}"></td>
       <td class="num">${fmt(r.price_usd, 2)}</td>
       <td class="num">${fmt(r.net_usd, 2)}</td>
       <td class="num">${fmt(r.cost_cny)}</td>
-      <td class="num">${fmt(r.dewu_price)}</td>
-      <td class="num">${fmt(r.payout)}</td>
-      <td class="num ${cls}">${r.profit > 0 ? '+' : ''}${fmt(r.profit)}</td>
+      <td class="num">${fmt(r.hk_price)}</td>
+      <td class="num">${fmt(r.payout_hk)}</td>
+      <td class="num">${fmt(r.cn_price)}</td>
+      <td class="num">${fmt(r.payout_cn)}</td>
+      <td class="num ${r.profit_hk > 0 ? 'pos' : 'neg'}">${r.profit_hk > 0 ? '+' : ''}${fmt(r.profit_hk)}</td>
+      <td class="num ${r.profit_cn > 0 ? 'pos' : 'neg'}">${r.profit_cn > 0 ? '+' : ''}${fmt(r.profit_cn)}</td>
       <td class="num ${cls}">${(r.roi * 100).toFixed(0)}%</td>
       <td class="num">${fmt(r.monthly_sales)}</td>
       <td class="num">${mom}</td>
@@ -287,6 +424,7 @@ function render() {
     el.classList.toggle('set', el.value.trim() !== ''));
   const n = Object.keys(OVERRIDES).length;
   $('#ovInfo').textContent = n ? `已自定义 ${n} 个商品` : '';
+  renderPager(rows.length);
 }
 
 async function loadFx() {
@@ -296,15 +434,32 @@ async function loadFx() {
     const key = CFG[SITE].fxKey;
     if (d[key] != null) $('#fx').value = Number(d[key]).toFixed(6);
     $('#fxInfo').innerHTML = d.live
-      ? `USD→CNY ${d.usd_cny} · KRW→CNY ${d.krw_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
+      ? `USD→CNY ${d.usd_cny} · HKD→CNY ${(d.usd_cny / d.usd_hkd).toFixed(4)}`
+        + ` · KRW→CNY ${d.krw_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
       : `未取到实时汇率，使用配置值`;
   } catch (e) { $('#fx').value = 7.12; $('#fxInfo').textContent = '汇率获取失败，请手填'; }
 }
 
 async function loadData() {
-  const d = await (await fetch('/arbitrage/raw?site=' + SITE)).json();
-  RAW = d.items || []; FEES = d.sell_cn_fees;
-  render();
+  const seq = ++loadSeq;
+  const site = SITE;
+  RAW = [];                                  // 先清空，避免上一站数据残留在表里
+  $('#rows').innerHTML = '';
+  $('#empty').hidden = true;
+  $('#loading').hidden = false;
+  $('#stats').innerHTML = '';
+  try {
+    const d = await (await fetch('/arbitrage/raw?site=' + site)).json();
+    // 期间用户又切了站/再次加载 -> 丢弃这次的迟到结果
+    if (seq !== loadSeq) return;
+    RAW = d.items || []; FEES = d.sell_cn_fees; FEES_HK = d.sell_hk_fees;
+    fillCategories();
+    render();
+  } catch (e) {
+    if (seq === loadSeq) $('#empty').hidden = false;
+  } finally {
+    if (seq === loadSeq) $('#loading').hidden = true;
+  }
 }
 
 /* 单品覆盖：change(失焦或回车) 时写入并重算 */
@@ -324,6 +479,8 @@ $('#rows').addEventListener('keydown', e => {
 });
 
 async function switchSite(site) {
+  if (SITE === site && RAW.length) return;
+  document.querySelectorAll('.tabs button').forEach(b => b.disabled = true);
   SITE = site;
   const c = CFG[site];
   document.querySelectorAll('.tabs button').forEach(b =>
@@ -334,25 +491,34 @@ async function switchSite(site) {
   $('#thPrice').textContent = `Adidas 售价 ${c.cur}`;
   $('#thNet').textContent = `货款 ${c.cur}`;
   if (FX && FX[c.fxKey] != null) $('#fx').value = Number(FX[c.fxKey]).toFixed(6);
-  await loadData();
+  try { await loadData(); }
+  finally { document.querySelectorAll('.tabs button').forEach(b => b.disabled = false); }
 }
 document.querySelectorAll('.tabs button').forEach(b =>
   b.onclick = () => switchSite(b.dataset.site));
 
-$('#apply').onclick = render;
+$('#apply').onclick = () => { page = 0; render(); };
 $('#reset').onclick = () => {
   $('#promo').value = '';
   ['rakuten','rmn','bank','ship','tax'].forEach((k, i) => $('#' + k).value = ['',0,3,0,0][i]);
   $('#minSales').value = 20; $('#minProfit').value = ''; $('#minRoi').value = '';
-  $('#stockOnly').value = '0';
+  $('#stockOnly').value = '0'; $('#posHk').value = '0'; $('#posCn').value = '0';
+  $('#catFilter').value = '';
   loadFx().then(render);
 };
 document.querySelectorAll('input').forEach(el =>
   el.addEventListener('keydown', e => { if (e.key === 'Enter') render(); }));
 $('#clearOv').onclick = () => { OVERRIDES = {}; saveOv(); render(); };
-$('#sortBy').onchange = () => { sortBy = $('#sortBy').value; render(); };
-$('#stockOnly').onchange = render;
-document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
+$('#sortBy').onchange = () => { sortBy = $('#sortBy').value; page = 0; render(); };
+$('#stockOnly').onchange = () => { page = 0; render(); };
+$('#catFilter').onchange = e => {
+  e.target.classList.toggle('active', !!e.target.value);
+  page = 0; render();
+};
+$('#posHk').onchange = () => { page = 0; render(); };
+$('#posCn').onchange = () => { page = 0; render(); };
+document.querySelectorAll('th[data-k]').forEach(th => th.onclick = (ev) => {
+  if (ev.target.tagName === 'SELECT') return;
   const k = th.dataset.k;
   if (sortBy === k) order = order === 'desc' ? 'asc' : 'desc';
   else { sortBy = k; order = 'desc'; }
@@ -360,7 +526,70 @@ document.querySelectorAll('th[data-k]').forEach(th => th.onclick = () => {
   render();
 });
 
-(async () => { await loadFx(); await loadData(); })();
+/* ── 任务面板 ───────────────────────────────────────────────────────── */
+let logOffset = 0, jobTimer = null, lastJobStatus = null;
+
+function setJobButtons(busy) {
+  document.querySelectorAll('button.job').forEach(b => b.disabled = busy);
+  $('#jobCancel').hidden = !busy;
+}
+
+function appendLog(lines) {
+  if (!lines.length) return;
+  const el = $('#jobLog');
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.textContent += lines.join(String.fromCharCode(10)) + String.fromCharCode(10);
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+async function pollJob() {
+  let d;
+  try { d = await (await fetch('/jobs/status?offset=' + logOffset)).json(); }
+  catch (e) { return; }
+
+  if (d.idle) {
+    $('#jobInfo').textContent = '空闲';
+    setJobButtons(false);
+    clearInterval(jobTimer); jobTimer = null;
+    return;
+  }
+  appendLog(d.lines || []);
+  logOffset = d.next_offset ?? logOffset;
+
+  const mm = String(Math.floor(d.elapsed / 60)).padStart(2, '0');
+  const ss = String(d.elapsed % 60).padStart(2, '0');
+  const tag = {running: '<span class="run">运行中</span>', done: '已完成',
+               failed: '<span class="err">失败</span>', cancelled: '已取消'}[d.status] || d.status;
+  $('#jobInfo').innerHTML = `${d.label} · ${tag} · ${mm}:${ss}`;
+  setJobButtons(d.status === 'running');
+
+  // 任务刚结束 -> 自动刷新表格数据
+  if (lastJobStatus === 'running' && d.status !== 'running') {
+    clearInterval(jobTimer); jobTimer = null;
+    loadData();
+  }
+  lastJobStatus = d.status;
+}
+
+function startPolling() {
+  if (jobTimer) clearInterval(jobTimer);
+  pollJob();
+  jobTimer = setInterval(pollJob, 2000);
+}
+
+document.querySelectorAll('button.job').forEach(b => b.onclick = async () => {
+  const name = b.dataset.job;
+  const r = await fetch(`/jobs/run/${name}?market=CN`, {method: 'POST'});
+  if (!r.ok) { alert((await r.json()).detail || '启动失败'); return; }
+  $('#jobLog').textContent = ''; logOffset = 0; lastJobStatus = 'running';
+  $('#jobLog').hidden = false;
+  setJobButtons(true);
+  startPolling();
+});
+$('#jobCancel').onclick = () => fetch('/jobs/cancel', {method: 'POST'});
+$('#logToggle').onclick = () => { $('#jobLog').hidden = !$('#jobLog').hidden; };
+
+(async () => { await loadFx(); await loadData(); startPolling(); })();
 </script>
 </body>
 </html>

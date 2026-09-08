@@ -16,12 +16,17 @@ class ArbitrageDAO:
     def __init__(self, db) -> None:
         self.db = db
         self.quotes = db["dewu_quotes"]
+        # 货号 -> globalSkuId 映射缓存。得物商品目录很少变，缓存后可跳过接口140，
+        # 是整个补全流程里最大的一笔调用节省。
+        self.skumap = db["dewu_sku_map"]
         self.match = db["match_status"]
         self.arb = db["arbitrage"]
 
     def ensure_indexes(self) -> None:
         self.quotes.create_index([("sku", ASCENDING)], unique=True)
         self.quotes.create_index([("fetched_at", ASCENDING)])
+        self.skumap.create_index([("sku", ASCENDING)], unique=True)
+        self.skumap.create_index([("fetched_at", ASCENDING)])
         self.match.create_index([("sku", ASCENDING)], unique=True)
         self.match.create_index([("found", ASCENDING), ("last_tried_at", ASCENDING)])
         self.arb.create_index([("sku", ASCENDING), ("size", ASCENDING)], unique=True)
@@ -36,6 +41,21 @@ class ArbitrageDAO:
 
     def get_quote(self, sku: str) -> dict | None:
         return self.quotes.find_one({"sku": sku})
+
+    # ── 货号 -> globalSkuId 映射缓存 ──────────────────────────────────────
+    def load_sku_maps(self, skus: Iterable[str], max_age_days: int = 30) -> dict[str, dict]:
+        """批量取缓存的目录映射，过期的不返回（触发重新拉取）。"""
+        from datetime import timedelta
+        cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+        cur = self.skumap.find({"sku": {"$in": list(skus)}, "fetched_at": {"$gte": cutoff}})
+        return {d["sku"]: d for d in cur}
+
+    def save_sku_map(self, sku: str, info: dict) -> None:
+        self.skumap.update_one(
+            {"sku": sku},
+            {"$set": {**info, "sku": sku, "fetched_at": datetime.utcnow()}},
+            upsert=True,
+        )
 
     # ── 命中状态 ──────────────────────────────────────────────────────────
     def mark_match(self, sku: str, found: bool) -> None:
