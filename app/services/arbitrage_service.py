@@ -155,6 +155,10 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     report(f"行情：{len(catalogs)} 个货号 / {total_ids} 个 skuId，"
            f"每 {SAVE_EVERY} 个货号一组落库")
 
+    # 重试统计：此前只有「彻底放弃」才写日志，中途退避成功是完全静默的 ——
+    # 一组耗时异常时无从判断是不是撞了限流。这里按组累计，落库时一并报出来。
+    retry_stat = {"rate_limited": 0, "slept": 0.0, "gave_up": 0}
+
     def _retrying(fn, c, tag):
         for attempt in range(MAX_RETRIES):
             try:
@@ -162,8 +166,12 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
             except Exception as e:
                 msg = str(e)
                 if RATE_LIMIT_CODE in msg and attempt < MAX_RETRIES - 1:
-                    time.sleep(BACKOFF_BASE * (2 ** attempt))
+                    delay = BACKOFF_BASE * (2 ** attempt)
+                    retry_stat["rate_limited"] += 1
+                    retry_stat["slept"] += delay
+                    time.sleep(delay)
                     continue
+                retry_stat["gave_up"] += 1
                 log.warning("%s失败: %s", tag, msg[:80])
                 return {}
         return {}
@@ -180,6 +188,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         if should_stop and should_stop():
             report(f"已请求停止，已落库 {saved} 个货号")
             break
+        t_group = time.time()
         group = skus_sorted[gi:gi + SAVE_EVERY]
         id_to_sku: dict[int, str] = {}
         for sku in group:
@@ -216,7 +225,13 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
             })
             dao.save_quote(sku, payload)
             saved += 1
-        report(f"  已落库 {saved}/{len(catalogs)} 个货号")
+        extra = ""
+        if retry_stat["rate_limited"] or retry_stat["gave_up"]:
+            extra = (f"（限流重试 {retry_stat['rate_limited']} 次，"
+                     f"累计退避 {retry_stat['slept']:.0f}s，放弃 {retry_stat['gave_up']} 次）")
+            retry_stat.update(rate_limited=0, slept=0.0, gave_up=0)
+        report(f"  已落库 {saved}/{len(catalogs)} 个货号 "
+               f"[本组 {time.time() - t_group:.0f}s]{extra}")
 
     report(f"报价补全完成：命中 {saved}，未命中 {miss}，失败 {errors}")
     return {"queried": len(targets), "hit": saved, "miss": miss, "errors": errors,
