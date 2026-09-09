@@ -246,6 +246,9 @@ const $ = s => document.querySelector(s);
 let RAW = [], FEES = null, FEES_HK = null, sortBy = 'profit_cn', order = 'desc';
 let SITE = 'us', FX = null, loadSeq = 0;
 let page = 0, pageSize = 100, lastRows = [];
+/* 各站已加载的原始响应。切国家来回看很常见，没必要每次重新请求 4MB。
+   任务跑完后 pollJob 会清掉，保证不看陈旧数据。 */
+const CACHE = {};
 const CAT = {
   'men-shoes':'男鞋', 'women-shoes':'女鞋', 'kids-shoes':'童鞋',
   'men-clothing':'男装', 'women-clothing':'女装', 'kids-clothing':'童装',
@@ -542,10 +545,15 @@ async function loadData() {
   $('#loading').hidden = false;
   $('#stats').innerHTML = '';
   try {
-    const d = await (await fetch('/arbitrage/raw?site=' + site)).json();
+    const cached = CACHE[site];
+    const d = cached || await (await fetch('/arbitrage/raw?site=' + site)).json();
     // 期间用户又切了站/再次加载 -> 丢弃这次的迟到结果
     if (seq !== loadSeq) return;
-    RAW = d.items || []; FEES = d.sell_cn_fees; FEES_HK = d.sell_hk_fees;
+    CACHE[site] = d;                           // 同一次会话内切回来不再请求
+    // 服务端把商品信息按货号存一份（name/url 原本随每个尺码重复），这里摊平回扁平结构
+    const P = d.products || {};
+    RAW = (d.items || []).map(r => ({...(P[r.sku] || {}), ...r}));
+    FEES = d.sell_cn_fees; FEES_HK = d.sell_hk_fees;
     fillCategories();
     render();
     loadFreshness();
@@ -651,6 +659,7 @@ async function pollJob() {
       el.hidden = false;
       el.className = 'jobbadge' + (d.status === 'failed' ? ' err' : '');
       el.textContent = d.label + ' · ' + label;
+      Object.keys(CACHE).forEach(k => delete CACHE[k]);   // 数据变了，缓存作废
       loadData();
     } else {
       el.hidden = true;

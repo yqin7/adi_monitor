@@ -30,6 +30,24 @@ def _iso(dt) -> str | None:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+# ── /raw 结果缓存 ─────────────────────────────────────────────────────
+# 组装一次要从 Atlas 搬 14k products + 3.7k quotes，实测 10 秒。
+# 数据只在抓取任务写库时才变，所以按「数据指纹」缓存：
+# 指纹用两条走索引的轻查询算出来（约 50ms），比重建便宜 200 倍，
+# 且抓取一落库指纹就变，不存在读到脏数据的风险。
+_RAW_CACHE: dict[str, tuple[tuple, dict]] = {}
+_FRESH_CACHE: dict[str, tuple[float, dict]] = {}   # site -> (写入时刻, 结果)
+
+
+def _data_stamp(db, site: str) -> tuple:
+    prod, q = db["products"], db["dewu_quotes"]
+    newest_p = prod.find_one({"site": site}, {"updated_at": 1},
+                             sort=[("updated_at", -1)]) or {}
+    newest_q = q.find_one({}, {"fetched_at": 1}, sort=[("fetched_at", -1)]) or {}
+    return (str(newest_p.get("updated_at")), prod.count_documents({"site": site}),
+            str(newest_q.get("fetched_at")), q.estimated_document_count())
+
+
 @router.get("", summary="套利机会列表（可按利润/利润率/销量排序）")
 def list_opportunities(
     sort_by: str = Query("profit", description="profit | roi | monthly_sales | dewu_price | cost_local"),
@@ -69,37 +87,55 @@ def freshness(site: str = Query("us", description="us | kr | jp | gb | ca")):
     所以分开统计；得物报价是分批刷的，除了最新最旧还给出分桶，
     好判断「整体可信度」而不是被单个极值误导。
     """
+    import time as _time
     from datetime import datetime, timedelta
+
+    # 这个接口只是回答「数据什么时候扫的」，不需要秒级精确；
+    # 而它要打十来个 Atlas 往返，每个往返都是几百毫秒。60 秒 TTL 足够。
+    cached = _FRESH_CACHE.get(site)
+    if cached and _time.time() - cached[0] < 60:
+        return {**cached[1], "cached": True}
+
     dao = _dao()
     prod = dao.db["products"]
 
-    def span(field: str) -> dict:
-        q = {"site": site, field: {"$ne": None}}
-        n = prod.count_documents(q)
-        if not n:
-            return {"count": 0, "newest": None, "oldest": None}
-        newest = prod.find_one(q, {field: 1}, sort=[(field, -1)])
-        oldest = prod.find_one(q, {field: 1}, sort=[(field, 1)])
-        return {"count": n,
-                "newest": _iso((newest or {}).get(field)),
-                "oldest": _iso((oldest or {}).get(field))}
-
-    # 美国站价格写在 updated_at，其余站写在 scraped_at
-    price = span("updated_at") if site == "us" else span("scraped_at")
-    sizes = span("sizes_updated_at")
+    # 三个时间字段一条聚合搞定，替掉原来 6 次往返（每字段 1 count + 2 find_one）
+    pfield = "updated_at" if site == "us" else "scraped_at"
+    agg = list(prod.aggregate([
+        {"$match": {"site": site}},
+        {"$group": {
+            "_id": None,
+            "p_new": {"$max": f"${pfield}"}, "p_old": {"$min": f"${pfield}"},
+            "p_cnt": {"$sum": {"$cond": [{"$ifNull": [f"${pfield}", False]}, 1, 0]}},
+            "s_new": {"$max": "$sizes_updated_at"}, "s_old": {"$min": "$sizes_updated_at"},
+            "s_cnt": {"$sum": {"$cond": [{"$ifNull": ["$sizes_updated_at", False]}, 1, 0]}},
+            "total": {"$sum": 1},
+        }},
+    ]))
+    a = agg[0] if agg else {}
+    price = {"count": a.get("p_cnt", 0),
+             "newest": _iso(a.get("p_new")), "oldest": _iso(a.get("p_old"))}
+    sizes = {"count": a.get("s_cnt", 0),
+             "newest": _iso(a.get("s_new")), "oldest": _iso(a.get("s_old"))}
 
     qf = dao.quote_freshness()
     quotes = {"count": qf.get("total", 0),
               "newest": _iso(qf.get("newest")), "oldest": _iso(qf.get("oldest")),
               "buckets": qf.get("buckets", {})}
 
-    # 本站有多少货号还完全没有得物报价 —— 补全进度
-    site_skus = prod.distinct("sku", {"site": site})
-    quoted = dao.quotes.count_documents({"sku": {"$in": site_skus}}) if site_skus else 0
+    # 本站有多少货号已有得物报价 —— 补全进度。
+    # 别反过来写：distinct 出 1.4 万个货号再拿去 $in 查 quotes，实测 8.9 秒；
+    # 用小集合(3.7k quotes)的货号去 $in 查带索引的 products，是 0.3 秒的事。
+    quote_skus = dao.quotes.distinct("sku")
+    site_total = a.get("total", 0)
+    quoted = (prod.count_documents({"site": site, "sku": {"$in": quote_skus}})
+              if quote_skus else 0)
 
-    return {"site": site, "server_time": _iso(datetime.utcnow()),
-            "adidas_price": price, "adidas_sizes": sizes, "dewu_quotes": quotes,
-            "coverage": {"site_skus": len(site_skus), "with_quote": quoted}}
+    out = {"site": site, "server_time": _iso(datetime.utcnow()),
+           "adidas_price": price, "adidas_sizes": sizes, "dewu_quotes": quotes,
+           "coverage": {"site_skus": site_total, "with_quote": quoted}}
+    _FRESH_CACHE[site] = (_time.time(), out)
+    return {**out, "cached": False}
 
 
 @router.post("/refresh", summary="拉取得物报价（后台执行）")
@@ -206,10 +242,17 @@ def fx():
 
 @router.get("/raw", summary="尺码级原始数据（供前端自行试算）")
 def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 | gb 英国 | ca 加拿大"),
-        min_sales: int = Query(0, ge=0), limit: int = Query(8000, ge=1, le=30000)):
+        min_sales: int = Query(0, ge=0), limit: int = Query(8000, ge=1, le=30000),
+        no_cache: bool = Query(False, description="强制重建，跳过缓存")):
     """返回计算利润所需的原始字段，不做任何费用假设。
 
     前端拿到后可按用户自填的返现/运费/汇率即时重算，无需回服务端。
+
+    响应做了两处瘦身（原来 4.1MB / 10 秒）：
+      1. 商品信息放 products 字典，按货号存一份；items 只留尺码级字段。
+         此前 name/url/category 会随每个尺码重复，一个 17 码的鞋重复 17 遍。
+      2. dewu_quotes 只投影用到的 5 个字段（原文档每个尺码有 14 个）。
+    前端 loadData 里再摊平回原来的扁平结构，calc/render 不用改。
     """
     from app.core.config import load_config
     from app.core.pricing import get_pricing_config
@@ -217,54 +260,77 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
 
     db = MongoConnection.from_environment(required=True).db
     dao = ArbitrageDAO(db)
+
+    stamp = _data_stamp(db, site)
+    key = f"{site}:{min_sales}:{limit}"
+    if not no_cache:
+        hit = _RAW_CACHE.get(key)
+        if hit and hit[0] == stamp:
+            return {**hit[1], "cached": True}
+
+    # 只取用到的字段：整份 quote 有 14 个尺码字段，前端只用 5 个
+    proj = {"sku": 1, "fetched_at": 1, "sizes.size": 1, "sizes.globalMinPrice": 1,
+            "sizes.globalSoldNum30": 1, "sizes.globalMonthToMonthRatio": 1,
+            "sizes.globalSkuId": 1}
+    quote_docs = list(dao.quotes.find({}, proj))
+
+    # 先有报价才有比价行，所以只拉这批商品。
+    # 此前是把本站 14,685 个商品全拉下来，其中一万多个没有得物报价、直接丢掉。
     products = {d["sku"]: d for d in db["products"].find(
-        {"site": site},
+        {"site": site, "sku": {"$in": [q["sku"] for q in quote_docs]}},
         {"sku": 1, "name": 1, "category": 1, "orig_price": 1, "sale_price": 1,
          "url": 1, "is_sold_out": 1, "promo_code": 1, "promo_rate": 1,
          "currency": 1, "available_sizes": 1,
-         # 新鲜度：美国站价格在 updated_at，其余站在 scraped_at
          "updated_at": 1, "scraped_at": 1, "sizes_updated_at": 1})}
 
-    rows = []
-    for q in dao.quotes.find({}):
-        quote_at = _iso(q.get("fetched_at"))
+    out_prods: dict[str, dict] = {}
+    rows: list[dict] = []
+    for q in quote_docs:
         p = products.get(q["sku"])
         if not p:
             continue
         usd = p.get("sale_price") or p.get("orig_price")
         if not usd:
             continue
-        for s in q.get("sizes", []):
-            price = s.get("globalMinPrice")
-            if not price:
-                continue
-            sales = s.get("globalSoldNum30") or 0
-            if sales < min_sales:
-                continue
-            rows.append({
-                "sku": q["sku"], "size": s.get("size"),
+        quote_at = _iso(q.get("fetched_at"))
+        sku = q["sku"]
+        if sku not in out_prods:
+            out_prods[sku] = {
                 "name": p.get("name"), "category": p.get("category"),
                 "url": p.get("url"), "is_sold_out": p.get("is_sold_out", False),
-                "site": site, "currency": p.get("currency", "USD"),
-                # 该尺码 Adidas 侧是否有货：True/False，拿不到尺码时为 None（未知）
-                "in_stock": in_stock(s.get("size"), p.get("available_sizes")),
+                "currency": p.get("currency", "USD"),
                 "list_usd": p.get("orig_price"), "price_usd": usd,
                 "promo_code": p.get("promo_code"), "promo_rate": p.get("promo_rate"),
-                # 得物接口返回的就是【香港报价】，结算单位人民币(RMB)。
-                # 国内报价 = 香港报价 × 1.09（电商税），由前端换算。
-                "dewu_price": price,
-                "monthly_sales": s.get("globalSoldNum30"),
-                "sales_mom": s.get("globalMonthToMonthRatio"),
-                "global_sku_id": s.get("globalSkuId"),
-                # ── 数据新鲜度（前端圆点 + 悬停明细用）──
                 "adidas_at": _iso(p.get("updated_at") or p.get("scraped_at")),
                 "sizes_at": _iso(p.get("sizes_updated_at")),
                 "dewu_at": quote_at,
+            }
+        for sz in q.get("sizes", []):
+            price = sz.get("globalMinPrice")
+            if not price:
+                continue
+            sales = sz.get("globalSoldNum30") or 0
+            if sales < min_sales:
+                continue
+            rows.append({
+                "sku": sku, "size": sz.get("size"),
+                # 该尺码 Adidas 侧是否有货：True/False，拿不到尺码时为 None（未知）
+                "in_stock": in_stock(sz.get("size"), p.get("available_sizes")),
+                # 得物接口返回的就是【香港报价】，结算单位人民币(RMB)。
+                # 国内报价 = 香港报价 × 1.09（电商税），由前端换算。
+                "dewu_price": price,
+                "monthly_sales": sz.get("globalSoldNum30"),
+                "sales_mom": sz.get("globalMonthToMonthRatio"),
+                "global_sku_id": sz.get("globalSkuId"),
             })
             if len(rows) >= limit:
                 break
+        if len(rows) >= limit:
+            break
 
     cfg = get_pricing_config(load_config())
-    return {"site": site, "count": len(rows),
-            "sell_cn_fees": cfg["sell_cn"], "sell_hk_fees": cfg["sell_hk"],
-            "items": rows}
+    payload = {"site": site, "count": len(rows),
+               "sell_cn_fees": cfg["sell_cn"], "sell_hk_fees": cfg["sell_hk"],
+               "products": out_prods, "items": rows}
+    _RAW_CACHE[key] = (stamp, payload)
+    return {**payload, "cached": False}
