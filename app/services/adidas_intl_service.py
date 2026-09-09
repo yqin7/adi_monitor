@@ -27,6 +27,9 @@ from app.services.full_scan_service import make_session, IMPERSONATE, parse_badg
 log = logging.getLogger(__name__)
 
 PAGE_SIZE = 48
+# 本轮抓到的 SKU 数低于库里已有的这个比例，判定为抓取异常而非「真的没货」。
+# 依据：官网目录不会一夜之间少掉四成，这种落差只可能是被限流/接口变更。
+HEALTH_MIN_RATIO = 0.6
 WORKERS = 6
 MAX_RETRIES = 3
 SLEEP_SEC = 0.8
@@ -52,9 +55,14 @@ CATEGORIES = [
 ]
 
 
-def fetch_page(session: cf_requests.Session, site: str, slug: str, start: int) -> dict | None:
+def fetch_page(session: cf_requests.Session, site: str, slug: str, start: int,
+               report: Callable[[str], None] | None = None) -> dict | None:
+    """抓一页。失败原因必须能传到调用方 —— 只写 log.warning 的话，
+    HTTP 403 这种整站被限流的情况在任务日志和前端都看不见，
+    表现成安静的「无数据」。英国站就这么整站漏过一轮。"""
     host, site_path, _, _ = SITES[site]
     url = f"https://{host}/api/search/taxonomy?sitePath={site_path}&query={slug}&start={start}"
+    last = ""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             r = session.get(url, impersonate=IMPERSONATE, timeout=25)
@@ -62,10 +70,13 @@ def fetch_page(session: cf_requests.Session, site: str, slug: str, start: int) -
                 return r.json()
             if r.status_code == 404:
                 return None
-            log.warning("%s %s start=%s HTTP %s", site, slug, start, r.status_code)
+            last = f"HTTP {r.status_code}"
         except Exception as exc:
-            log.warning("%s %s start=%s %s", site, slug, start, type(exc).__name__)
+            last = type(exc).__name__
+        log.warning("%s %s start=%s %s (第%s次)", site, slug, start, last, attempt)
         time.sleep(SLEEP_SEC * attempt)
+    if report and last:
+        report(f"    【重试失败】[{slug}] start={start} 重试 {MAX_RETRIES} 次仍失败：{last}")
     return None
 
 
@@ -109,7 +120,7 @@ def parse_item(it: dict, category: str, site: str) -> dict | None:
 
 def scan_category(session, site: str, slug: str, label: str,
                   report: Callable[[str], None]) -> list[dict]:
-    first = fetch_page(session, site, slug, 0)
+    first = fetch_page(session, site, slug, 0, report)
     if not first:
         report(f"  [{label}] 无数据")
         return []
@@ -121,7 +132,7 @@ def scan_category(session, site: str, slug: str, label: str,
     out = [x for x in (parse_item(i, label, site) for i in il.get("items", [])) if x]
     starts = [p * PAGE_SIZE for p in range(1, pages)]
     with ThreadPoolExecutor(WORKERS) as ex:
-        for d in ex.map(lambda st: fetch_page(session, site, slug, st), starts):
+        for d in ex.map(lambda st: fetch_page(session, site, slug, st, report), starts):
             if d:
                 out.extend(x for x in
                            (parse_item(i, label, site)
@@ -162,6 +173,27 @@ def run_site_scan(site: str, category: str | None = None,
     deduped = list(seen.values())
     report(f"[{label_cn}] 去重后: {len(deduped)} 个唯一 SKU")
 
+    # ── 健康门槛 ──────────────────────────────────────────────────────
+    # 抓崩了不能安静地打印「完成：0 个 SKU」——那样数据会悄悄陈旧下去，
+    # 而前端新鲜度显示的还是上次成功抓取的时间，看着一切正常。
+    from app.dao.mongo_client import MongoConnection as _MC
+    _conn = _MC.from_environment(required=True)
+    try:
+        prev = _conn.db["products"].count_documents({"site": site})
+    finally:
+        _conn.close()
+    ratio = (len(deduped) / prev) if prev else 1.0
+    if prev and ratio < HEALTH_MIN_RATIO:
+        msg = (f"[{label_cn}] 【抓取异常】本轮 {len(deduped)} 个 SKU，"
+               f"库里已有 {prev} 个，仅 {ratio:.0%}（门槛 {HEALTH_MIN_RATIO:.0%}）。"
+               f"已放弃写库，保留原有数据。")
+        report(msg)
+        log.error(msg)
+        return {"site": site, "total": len(deduped), "discounted": 0,
+                "batch_id": None, "healthy": False, "error": msg,
+                "prev_total": prev, "new_count": 0, "new_skus": [],
+                "restock": {}, "out_of_stock": {}}
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_id = f"{site}_price_{ts}"
     conn = MongoConnection.from_environment(required=True)
@@ -186,7 +218,7 @@ def run_site_scan(site: str, category: str | None = None,
     report(f"[{label_cn}] 完成：{len(deduped)} 个 SKU，打折 {discounted} 个；"
            f"补货 {len(diff['new_in_stock'])} 个，断码 {len(diff['went_out_of_stock'])} 个")
     return {"site": site, "total": len(deduped), "discounted": discounted,
-            "batch_id": batch_id,
+            "batch_id": batch_id, "healthy": True, "prev_total": prev,
             "new_count": stat["new_count"], "new_skus": stat["new_skus"],
             "restock": diff["new_in_stock"], "out_of_stock": diff["went_out_of_stock"]}
 

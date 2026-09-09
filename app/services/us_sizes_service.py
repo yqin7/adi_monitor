@@ -95,8 +95,16 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
                 absorb(d)
         report(f"  [{slug}] 累计 {len(collected)} 个 SKU 有尺码")
 
-    if not collected:
-        return {"skus": 0, "updated": 0}
+    # 与国际站同一套健康门槛：抓崩了要明确报错，不能安静返回 0
+    prev = prod.count_documents({"site": "us", "available_sizes": {"$exists": True}})
+    ratio = (len(collected) / prev) if prev else 1.0
+    if not collected or (prev and ratio < 0.6):
+        msg = (f"美国站尺码抓取异常：本轮 {len(collected)} 个，库里已有 {prev} 个"
+               f"（{ratio:.0%}，门槛 60%）。已放弃写库，保留原有数据。")
+        report(msg)
+        log.error(msg)
+        return {"skus": len(collected), "updated": 0, "healthy": False,
+                "error": msg, "restock": {}, "out_of_stock": {}}
 
     # 尺码与价格是两次独立抓取（价格走 PLP，尺码走 taxonomy），
     # 所以单独记时间，前端才能分辨「价格新但尺码旧」这种情况。
@@ -118,5 +126,5 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
                              batch_id=datetime.now().strftime("us_sizes_%Y%m%d_%H%M%S"))
     report(f"美国站尺码补全完成：{len(collected)} 个 SKU，更新 {written} 条；"
            f"补货 {len(diff['new_in_stock'])} 个，断码 {len(diff['went_out_of_stock'])} 个")
-    return {"skus": len(collected), "updated": written,
+    return {"skus": len(collected), "updated": written, "healthy": True,
             "restock": diff["new_in_stock"], "out_of_stock": diff["went_out_of_stock"]}

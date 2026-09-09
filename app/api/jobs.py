@@ -39,6 +39,10 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
             都不额外发请求 —— 差异是抓取过程中顺手算出来的。
             """
             res = res or {}
+            if res.get("healthy") is False:
+                # 抓取本身失败了，别把它当成「这一站今天没新品」
+                log(f"  【数据不可信】{site.upper()} 本轮，已跳过写库与通知")
+                return
             restock = res.get("restock") or {}
             new_skus = res.get("new_skus") or []
             if not restock and not new_skus:

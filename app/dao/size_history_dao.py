@@ -50,7 +50,7 @@ class SizeHistoryDAO:
         now = datetime.utcnow()
         prev = self.latest_many(current.keys(), site)
 
-        ops, restock, oos = [], {}, {}
+        ops, inserts, restock, oos = [], [], {}, {}
         for sku, sizes in current.items():
             cur_set = set(sizes)
             old = prev.get(sku)
@@ -69,14 +69,17 @@ class SizeHistoryDAO:
                 if lost:
                     oos[sku] = lost
 
-            self.coll.insert_one({
+            # 攒批再写。曾经是循环里 insert_one，对着 Atlas 每条一个网络往返，
+            # 实测约 3.5 条/秒 —— 首轮全是新增，光美国站就要跑 50 分钟。
+            inserts.append({
                 "sku": sku, "site": site, "sizes": sorted(cur_set),
                 "observed_at": now, "last_seen_at": now, "batch_id": batch_id,
             })
 
-        if ops:
-            for i in range(0, len(ops), 1000):
-                self.coll.bulk_write(ops[i:i + 1000], ordered=False)
+        for i in range(0, len(inserts), 1000):
+            self.coll.insert_many(inserts[i:i + 1000], ordered=False)
+        for i in range(0, len(ops), 1000):
+            self.coll.bulk_write(ops[i:i + 1000], ordered=False)
 
         return {"changed": len(restock) + len(oos),
                 "new_in_stock": restock, "went_out_of_stock": oos}
