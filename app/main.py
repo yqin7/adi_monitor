@@ -17,7 +17,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.paths import PROJECT_ROOT
-from app.api import system, products, scan, watch, notifications, config_router, arbitrage, jobs
+from app.api import (system, products, scan, watch, notifications, config_router,
+                     arbitrage, jobs, lookup)
 
 # ===== 日志配置 =====
 logging.basicConfig(
@@ -42,6 +43,7 @@ app.include_router(notifications.router)
 app.include_router(config_router.router)
 app.include_router(arbitrage.router)
 app.include_router(jobs.router)
+app.include_router(lookup.router)
 
 _STATIC = PROJECT_ROOT / "app" / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")

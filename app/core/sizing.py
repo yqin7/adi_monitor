@@ -50,6 +50,7 @@ _APPAREL_ALIAS = {
     "XXXXXL": "5XL", "5XL": "5XL",
     # 均码
     "NS": "OS", "OS": "OS", "OSFM": "OS", "OSFW": "OS", "OSFL": "OS", "ONE SIZE": "OS",
+    "1SIZE": "OS", "ONESIZE": "OS", "OSFA": "OS", "FREE": "OS", "フリー": "OS", "F": "OS",
 }
 
 
@@ -57,8 +58,14 @@ def _clean(raw: str) -> str:
     s = str(raw or "").strip().upper()
     for uni, ascii_ in _FRAC.items():
         s = s.replace(uni, ascii_)
-    # 去掉亚洲版型前缀 A/、韩版 K 前缀（KS/KM/KL）保留主体
-    s = re.sub(r"^A\s*/\s*", "", s)
+    # 去掉版型前缀：A/ 亚洲版、J/ 日本版、E/ 欧版。
+    # 只是同一档位的不同版型标注，档位本身在斜杠后面。
+    s = re.sub(r"^[AJE]\s*/\s*", "", s)
+    # 短裤的裤长后缀不是尺码档位，去掉：
+    #   韩国 'A/M 5"' / "A/S 7''"、日本 'M-7inch(裤)'
+    # 不去的话 normalize 直接返回 None，in_stock 会把「有货」误判成「断码」。
+    s = re.sub(r"[\s\-]*\d+(?:\.\d+)?\s*(?:INCH(?:ES)?|\"|''|’’|”|″)\S*$",
+               "", s).strip()
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
@@ -140,6 +147,21 @@ def normalize(raw: str) -> tuple[str, str | int] | None:
             mm = UK_TO_MM.get(v)
             return ("shoe", mm) if mm else None
 
+    # 3b) 英国童装年龄码 "7-8Y"、"3-4Y" —— 自成一套，只跟同类比
+    m = re.fullmatch(r"(\d{1,2})\s*-\s*(\d{1,2})\s*Y", s)
+    if m:
+        return ("kid_age", f"{int(m.group(1))}-{int(m.group(2))}Y")
+
+    # 3c) 英国童鞋 "10K"/"13K"（K = kids），与成人英码不是同一把尺子
+    m = re.fullmatch(r"(\d{1,2}(?:\.5)?)\s*K", s)
+    if m:
+        return ("kid_shoe", m.group(1))
+
+    # 3d) 区间码（手套/袜子）"6.5 - 8"：取区间本身做标识，不硬套成单码
+    m = re.fullmatch(r"(\d{1,2}(?:\.5)?)\s*-\s*(\d{1,2}(?:\.5)?)", s)
+    if m:
+        return ("range", f"{m.group(1)}-{m.group(2)}")
+
     # 4) 服装
     key = s.replace(" ", "")
     if key in _APPAREL_ALIAS:
@@ -157,11 +179,13 @@ def sizes_match(a: str, b: str, tolerance_mm: int = 6) -> bool:
     na, nb = normalize(a), normalize(b)
     if not na or not nb:
         return False
-    if na[0] == "shoe" and nb[0] == "shoe":
+    if na[0] != nb[0]:              # 不同命名空间不可比（成人码 vs 童码等）
+        return False
+    if na[0] == "shoe":
         return abs(int(na[1]) - int(nb[1])) <= tolerance_mm
-    if na[0] == "apparel" and nb[0] == "apparel":
-        return na[1] == nb[1]
-    return False
+    # 其余（apparel / kid_age / kid_shoe / range）都是离散标签，同值即同档。
+    # 用通用相等而非逐类枚举 —— 以后再加命名空间不必改这里。
+    return na[1] == nb[1]
 
 
 def in_stock(dewu_size: str, available: Iterable[str], tolerance_mm: int = 6) -> bool | None:
@@ -173,4 +197,10 @@ def in_stock(dewu_size: str, available: Iterable[str], tolerance_mm: int = 6) ->
     avail = [s for s in (available or []) if s and str(s).upper() != "HIDDEN"]
     if not avail:
         return None
-    return any(sizes_match(dewu_size, a, tolerance_mm) for a in avail)
+    if any(sizes_match(dewu_size, a, tolerance_mm) for a in avail):
+        return True
+    # 没匹配上，先分清是「真断码」还是「我们看不懂这些尺码」：
+    # 该商品的站点尺码一个都归一化不了时，说的是后者，应返回未知。
+    if normalize(dewu_size) is None or not any(normalize(a) for a in avail):
+        return None
+    return False
