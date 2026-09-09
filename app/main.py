@@ -132,6 +132,11 @@ async def shutdown():
     except Exception as e:
         logger.error(f"停止定时调度失败: {e}")
 
+    try:
+        MongoConnection.shutdown()          # 关掉进程内共享连接
+    except Exception as e:
+        logger.error(f"关闭共享 Mongo 连接失败: {e}")
+
     if state.mongo_conn:
         try:
             state.mongo_conn.close()

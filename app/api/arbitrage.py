@@ -1,7 +1,9 @@
 """比价（套利机会）接口。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Query
+import json
+
+from fastapi import APIRouter, BackgroundTasks, Query, Response
 
 from app.dao.arbitrage_dao import ArbitrageDAO
 from app.dao.mongo_client import MongoConnection
@@ -35,7 +37,9 @@ def _iso(dt) -> str | None:
 # 数据只在抓取任务写库时才变，所以按「数据指纹」缓存：
 # 指纹用两条走索引的轻查询算出来（约 50ms），比重建便宜 200 倍，
 # 且抓取一落库指纹就变，不存在读到脏数据的风险。
-_RAW_CACHE: dict[str, tuple[tuple, dict]] = {}
+# 缓存的是【已序列化的字节】而非 dict：1.47MB 的响应每次重新编码要 1.4 秒，
+# 而这份内容在下一次抓取落库前是完全不变的。
+_RAW_CACHE: dict[str, tuple[tuple, bytes]] = {}
 _FRESH_CACHE: dict[str, tuple[float, dict]] = {}   # site -> (写入时刻, 结果)
 
 
@@ -266,7 +270,8 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
     if not no_cache:
         hit = _RAW_CACHE.get(key)
         if hit and hit[0] == stamp:
-            return {**hit[1], "cached": True}
+            return Response(content=hit[1], media_type="application/json",
+                            headers={"X-Cache": "HIT"})
 
     # 只取用到的字段：整份 quote 有 14 个尺码字段，前端只用 5 个
     proj = {"sku": 1, "fetched_at": 1, "sizes.size": 1, "sizes.globalMinPrice": 1,
@@ -332,5 +337,7 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
     payload = {"site": site, "count": len(rows),
                "sell_cn_fees": cfg["sell_cn"], "sell_hk_fees": cfg["sell_hk"],
                "products": out_prods, "items": rows}
-    _RAW_CACHE[key] = (stamp, payload)
-    return {**payload, "cached": False}
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    _RAW_CACHE[key] = (stamp, body)
+    return Response(content=body, media_type="application/json",
+                    headers={"X-Cache": "MISS"})
