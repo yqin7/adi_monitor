@@ -128,6 +128,31 @@
             border-radius:7px;padding:5px 10px}
   .jobbadge.run{color:var(--pos);border-color:var(--pos)}
   .jobbadge.err{color:var(--neg);border-color:var(--neg)}
+
+  /* ── 货号搜索 ─────────────────────────────────────────────── */
+  #skuSearch{width:190px}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;
+         display:flex;align-items:flex-start;justify-content:center;padding:38px 14px;
+         overflow:auto}
+  .modal[hidden]{display:none!important}
+  .sheet{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         width:min(1000px,100%);padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+  .sheet h3{margin:0 0 3px;font-size:17px}
+  .sheet .meta{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  .sheet h4{font-size:12px;color:var(--muted);margin:16px 0 8px;font-weight:600;
+            text-transform:uppercase;letter-spacing:.02em}
+  .sheet table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .sheet th,.sheet td{padding:6px 9px;border-bottom:1px solid var(--line);
+                      text-align:left;white-space:nowrap}
+  .sheet th{color:var(--muted);font-weight:600}
+  .sheet td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .sheet .close{position:absolute;top:0;right:0}
+  .sheetwrap{position:relative}
+  .stk2{font-size:11.5px;padding:1px 6px;border-radius:5px}
+  .stk2.y{background:rgba(63,185,80,.16);color:var(--pos)}
+  .stk2.n{background:rgba(248,81,73,.14);color:var(--neg)}
+  .stk2.u{background:rgba(110,118,129,.18);color:var(--muted)}
+  .mzero{padding:26px;text-align:center;color:var(--muted)}
   .pager{display:flex;gap:8px;align-items:center;justify-content:center;
          margin:10px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
   .pager button{padding:5px 12px;font-size:12.5px}
@@ -147,6 +172,8 @@
   <div class="sub">填入你的返利与运费，回车即刻重算利润</div>
 
   <div class="topnav">
+    <input id="skuSearch" placeholder="搜货号，如 JE5682（回车）" autocomplete="off">
+    <button class="ghost" id="skuGo">搜索</button>
     <a href="/ui/tasks">数据任务 →</a>
     <span class="jobbadge" id="jobBadge" hidden></span>
   </div>
@@ -239,6 +266,13 @@
     <div class="empty" id="empty" hidden>暂无数据</div>
   </div>
   <div class="pager" id="pagerBottom"></div>
+</div>
+
+<div class="modal" id="skuModal" hidden>
+  <div class="sheet sheetwrap">
+    <button class="ghost close" id="skuClose">关闭</button>
+    <div id="skuBody"></div>
+  </div>
 </div>
 
 <script>
@@ -609,7 +643,9 @@ $('#reset').onclick = () => {
   $('#catFilter').value = '';
   loadFx().then(render);
 };
-document.querySelectorAll('input').forEach(el =>
+/* 参数框回车即重算。排除货号搜索框 —— 它的回车是「去查这个货号」，
+   不该顺带触发一次全表重算。 */
+document.querySelectorAll('input:not(#skuSearch)').forEach(el =>
   el.addEventListener('keydown', e => { if (e.key === 'Enter') render(); }));
 $('#clearOv').onclick = () => { OVERRIDES = {}; saveOv(); render(); };
 $('#sortBy').onchange = () => { sortBy = $('#sortBy').value; page = 0; render(); };
@@ -628,6 +664,114 @@ document.querySelectorAll('th[data-k]').forEach(th => th.onclick = (ev) => {
   else { sortBy = k; order = 'desc'; }
   $('#sortBy').value = ['profit','roi','monthly_sales'].includes(k) ? k : $('#sortBy').value;
   render();
+});
+
+/* ── 货号搜索 ───────────────────────────────────────────────────────
+   走 /lookup/{货号}，按货号横切五个站 —— 和主表按站点切片的视角互补。
+   得物报价默认读库，不实时调接口，免得每次搜索都消耗得物的日额度。 */
+const CUR = {USD:'$', KRW:'₩', JPY:'¥', GBP:'£', CAD:'C$'};
+
+function stkTag(v) {
+  if (v === true) return '<span class="stk2 y">有</span>';
+  if (v === false) return '<span class="stk2 n">断</span>';
+  return '<span class="stk2 u">?</span>';
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function searchSku() {
+  const q = $('#skuSearch').value.trim().toUpperCase();
+  if (!q) return;
+  $('#skuModal').hidden = false;
+  $('#skuBody').innerHTML = '<div class="mzero">查询 ' + esc(q) + ' …</div>';
+  let d;
+  try {
+    const r = await fetch('/lookup/' + encodeURIComponent(q));
+    if (r.status === 404) {
+      $('#skuBody').innerHTML = '<div class="mzero">没找到货号 <b>' + esc(q)
+        + '</b><br>五国官网与得物都没有这个货号的记录</div>';
+      return;
+    }
+    d = await r.json();
+  } catch (e) {
+    $('#skuBody').innerHTML = '<div class="mzero">查询失败，请重试</div>';
+    return;
+  }
+
+  const dw = d.dewu || {};
+  const head = '<h3>' + esc(d.sku) + '</h3><div class="meta">'
+    + '覆盖 ' + d.site_count + ' 个站 · 得物'
+    + (dw.found ? '有报价（' + (dw.source === 'live' ? '实时' : '库存数据')
+        + (dw.fetched_at ? ' · ' + ago(dw.fetched_at) : '') + '）'
+      : '无报价' + (dw.note ? '（' + esc(dw.note) + '）' : ''))
+    + (dw.title ? ' · ' + esc(dw.title) : '') + '</div>';
+
+  const rows = d.sites.map(s => {
+    const c = CUR[s.currency] || (s.currency || '');
+    const off = s.promo_rate ? Math.round((1 - s.promo_rate) * 100) + '%off' : '';
+    return '<tr>'
+      + '<td>' + esc(s.site_cn) + '</td>'
+      + '<td class="num">' + (s.orig_price != null ? c + s.orig_price : '—') + '</td>'
+      + '<td class="num">' + (s.sale_price != null ? c + s.sale_price : '—') + '</td>'
+      + '<td>' + (s.promo_code ? esc(s.promo_code) + ' ' + off : '—') + '</td>'
+      + '<td class="num">' + s.size_count + '</td>'
+      + '<td>' + (s.is_sold_out ? '<span class="stk2 n">售罄</span>' : '') + '</td>'
+      + '<td>' + (s.scraped_at ? ago(s.scraped_at) : '—') + '</td>'
+      + '<td>' + (s.url ? '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">打开</a>' : '') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  const siteTbl = '<h4>各国售价</h4><table><thead><tr>'
+    + '<th>站点</th><th>原价</th><th>折后</th><th>促销码</th><th>尺码数</th>'
+    + '<th>状态</th><th>抓取于</th><th></th></tr></thead><tbody>'
+    + (rows || '<tr><td colspan="8">各国官网都没有这个货号</td></tr>')
+    + '</tbody></table>';
+
+  let sizeTbl = '';
+  if (d.sizes && d.sizes.length) {
+    const cols = d.sites.map(s => s.site);
+    sizeTbl = '<h4>尺码 · 得物报价与各国库存</h4><table><thead><tr>'
+      + '<th>尺码</th><th>得物 ¥</th><th>月销</th><th>环比</th>'
+      + cols.map(s => '<th>' + esc(SITE_CN[s] || s) + '</th>').join('')
+      + '</tr></thead><tbody>'
+      + d.sizes.map(r => '<tr>'
+        + '<td>' + esc(r.size) + '</td>'
+        + '<td class="num">' + (r.dewu_price != null ? r.dewu_price : '—') + '</td>'
+        + '<td class="num">' + (r.monthly_sales || 0) + '</td>'
+        + '<td class="num">' + (r.sales_mom == null ? '—'
+            : (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom * 100).toFixed(0) + '%') + '</td>'
+        + cols.map(s => '<td>' + stkTag((r.in_stock || {})[s]) + '</td>').join('')
+        + '</tr>').join('')
+      + '</tbody></table>'
+      + '<div class="meta" style="margin-top:8px">'
+      + '得物价为香港报价（人民币结算）；库存「?」表示该站没有尺码数据或写法暂不支持</div>';
+  }
+  $('#skuBody').innerHTML = head + siteTbl + sizeTbl;
+}
+
+const SITE_CN = {us:'美国', kr:'韩国', jp:'日本', gb:'英国', ca:'加拿大'};
+
+$('#skuGo').onclick = searchSku;
+$('#skuSearch').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.stopPropagation(); searchSku(); }
+});
+$('#skuClose').onclick = () => { $('#skuModal').hidden = true; };
+$('#skuModal').addEventListener('click', e => {
+  if (e.target.id === 'skuModal') $('#skuModal').hidden = true;   // 点遮罩关闭
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') $('#skuModal').hidden = true;
+});
+/* 表格里的货号点一下也能查 —— 比复制粘贴到搜索框快 */
+$('#rows').addEventListener('click', e => {
+  const a = e.target.closest('td.sku a');
+  if (!a || !e.altKey) return;      // Alt+点击查详情，普通点击仍是打开官网
+  e.preventDefault();
+  $('#skuSearch').value = a.textContent.trim();
+  searchSku();
 });
 
 /* ── 任务状态（面板已独立到 /ui/tasks，这里只留一个轻量指示灯）──────
