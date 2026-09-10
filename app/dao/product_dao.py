@@ -17,7 +17,13 @@ class ProductDAO:
         self._ensure_indexes()
 
     def _ensure_indexes(self) -> None:
-        # 同一货号在不同站点（us/kr）价格不同，必须按 (sku, site) 区分
+        # 同一货号在不同站点（us/kr）价格不同，必须按 (sku, site) 区分。
+        # 旧库上还留着 sku 单列唯一索引的话，国际站第一次写入就会 E11000
+        # 整轮中断 —— history 的旧索引下面显式 drop 了，这里也要一并处理。
+        try:
+            self.collection.drop_index("sku_1")
+        except Exception:
+            pass
         self.collection.create_index([("sku", 1), ("site", 1)], unique=True)
         self.collection.create_index("site")
         self.collection.create_index("category")
@@ -128,7 +134,7 @@ class ProductDAO:
 
             if len(product_ops) >= WRITE_BATCH_SIZE:
                 batch_size = len(product_ops)
-                new_skus.extend(self._flush_products(product_ops, op_keys))
+                new_skus.extend(self._flush_products(product_ops, op_keys, BulkWriteError))
                 products_written += batch_size
                 product_ops.clear()
                 op_keys.clear()
@@ -140,7 +146,7 @@ class ProductDAO:
 
         if product_ops:
             batch_size = len(product_ops)
-            new_skus.extend(self._flush_products(product_ops, op_keys))
+            new_skus.extend(self._flush_products(product_ops, op_keys, BulkWriteError))
             products_written += batch_size
             print(f"  products: {products_written}/{total_label}", flush=True)
         if history_docs:
@@ -150,16 +156,27 @@ class ProductDAO:
               f"price_history={history_written}, 新品={len(new_skus)}", flush=True)
         return {"count": count, "new_count": len(new_skus), "new_skus": new_skus}
 
-    def _flush_products(self, ops, keys) -> list[dict[str, str]]:
+    def _flush_products(self, ops, keys, bulk_write_error) -> list[dict[str, str]]:
         """写一批 products，返回其中【首次插入】的 (sku, site)。
 
         bulk_write 的 upserted_ids 是 {ops 下标: _id}，下标对应传入顺序，
         据此回查 keys 就知道这批里哪些是新商品 —— 不用额外查一次库。
+
+        重复键（旧唯一索引残留、并发写入）不该让整轮抓取崩掉：吞掉 11000，
+        其余错误照旧抛出。
         """
-        res = self.collection.bulk_write(ops, ordered=False)
+        try:
+            res = self.collection.bulk_write(ops, ordered=False)
+            upserted = res.upserted_ids or {}
+        except bulk_write_error as exc:
+            details = getattr(exc, "details", {}) or {}
+            others = [e for e in details.get("writeErrors", []) if e.get("code") != 11000]
+            if others:
+                raise
+            upserted = {u["index"]: u["_id"] for u in details.get("upserted", [])}
+            print(f"  警告：{len(details.get('writeErrors', []))} 条重复键已跳过", flush=True)
         return [{"sku": keys[i][0], "site": keys[i][1]}
-                for i in (res.upserted_ids or {})
-                if i < len(keys)]
+                for i in upserted if i < len(keys)]
 
     def _insert_history(self, documents: list[dict[str, Any]], bulk_write_error: type[Exception]) -> int:
         """Insert one append-only history batch and tolerate same-batch reruns."""

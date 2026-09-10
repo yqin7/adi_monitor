@@ -204,8 +204,9 @@ def run_site_scan(site: str, category: str | None = None,
         report(f"[{label_cn}] 新上架 {stat['new_count']} 个 SKU")
         # 记录尺码快照，供补货/断码检测
         from app.dao.size_history_dao import SizeHistoryDAO
-        sizes_map = {x["sku"]: x.get("available_sizes") or []
-                     for x in deduped if x.get("available_sizes")}
+        # 不能只收「有尺码」的：整只断码（available_sizes 变空）的商品被滤掉后，
+        # record_changes 根本看不到它，旧快照会一直宣称有货。空列表才是信号本身。
+        sizes_map = {x["sku"]: (x.get("available_sizes") or []) for x in deduped}
         diff = {"new_in_stock": {}, "went_out_of_stock": {}}
         if sizes_map:
             sh = SizeHistoryDAO(conn.db)

@@ -7,3 +7,6 @@ fastapi>=0.104.0
 uvicorn>=0.24.0
 pydantic>=2.5.0
 apscheduler>=3.10,<4
+# 得物海外(POIZON)查询客户端，源码见 yqin7/dewu-monitor（私有仓库）。
+# 只有得物相关任务需要它；缺失时服务仍能启动，比价页读库正常。
+dewu-client @ git+https://github.com/yqin7/dewu-monitor.git

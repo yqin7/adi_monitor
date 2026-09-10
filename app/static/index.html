@@ -573,7 +573,13 @@ async function loadFx() {
       ? `USD→CNY ${d.usd_cny} · HKD→CNY ${(d.usd_cny / d.usd_hkd).toFixed(4)}`
         + ` · KRW→CNY ${d.krw_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
       : `未取到实时汇率，使用配置值`;
-  } catch (e) { $('#fx').value = 7.12; $('#fxInfo').textContent = '汇率获取失败，请手填'; }
+  } catch (e) {
+    // 别一律回落 7.12 —— 那是 USD→CNY，日元用它成本会虚高约 148 倍。
+    // 按当前站点的币种给个数量级正确的兜底，并明确提示不可信。
+    const FB = {usd_cny:7.1, krw_cny:0.0052, jpy_cny:0.047, gbp_cny:9.0, cad_cny:5.0};
+    $('#fx').value = FB[CFG[SITE].fxKey] ?? 7.1;
+    $('#fxInfo').textContent = '汇率获取失败，已填兜底值，请核对后手改';
+  }
 }
 
 async function loadData() {
@@ -632,7 +638,10 @@ async function switchSite(site) {
   $('#fx').step = c.step;
   $('#thPrice').textContent = `Adidas 售价 ${c.cur}`;
   $('#thNet').textContent = `货款 ${c.cur}`;
-  if (FX && FX[c.fxKey] != null) $('#fx').value = Number(FX[c.fxKey]).toFixed(6);
+  // 切站必须换汇率。缺这个币种时不能沿用上一站的值 —— 那会把英镑当日元用。
+  const FB = {usd_cny:7.1, krw_cny:0.0052, jpy_cny:0.047, gbp_cny:9.0, cad_cny:5.0};
+  const rate = (FX && FX[c.fxKey] != null) ? Number(FX[c.fxKey]) : FB[c.fxKey];
+  if (rate != null) $('#fx').value = Number(rate).toFixed(6);
   try { await loadData(); }
   finally { document.querySelectorAll('.tabs button').forEach(b => b.disabled = false); }
 }

@@ -85,15 +85,27 @@ def start() -> None:
     age = int(_env("SCHEDULER_QUOTE_AGE_DAYS", "7"))
     sched = BackgroundScheduler(timezone="Asia/Shanghai")
 
+    def _trigger(expr: str):
+        """带抖动的 cron 触发器。
+
+        注意：add_job(..., trigger_instance, jitter=N) 里的 jitter 会被
+        APScheduler 静默丢弃 —— 它只在 trigger 由 add_job 自己构造时才生效。
+        实测传实例时 trigger.jitter 是 None，而日志还在报「抖动 ±300s」。
+        这里改成构造后直接赋值。
+        """
+        t = CronTrigger.from_crontab(expr, timezone="Asia/Shanghai")
+        t.jitter = jitter
+        return t
+
     adidas_cron = _env("SCHEDULER_ADIDAS_CRON", DEFAULT_ADIDAS_CRON)
-    sched.add_job(_run, CronTrigger.from_crontab(adidas_cron, timezone="Asia/Shanghai"),
-                  id="adidas", args=["adidas"], jitter=jitter,
+    sched.add_job(_run, _trigger(adidas_cron),
+                  id="adidas", args=["adidas"],
                   max_instances=1, coalesce=True, misfire_grace_time=600)
 
     dewu_cron = _env("SCHEDULER_DEWU_CRON", DEFAULT_DEWU_CRON)
-    sched.add_job(_run, CronTrigger.from_crontab(dewu_cron, timezone="Asia/Shanghai"),
+    sched.add_job(_run, _trigger(dewu_cron),
                   id="dewu", args=["dewu"], kwargs={"max_quote_age_days": age},
-                  jitter=jitter, max_instances=1, coalesce=True, misfire_grace_time=1800)
+                  max_instances=1, coalesce=True, misfire_grace_time=1800)
 
     sched.start()
     _scheduler = sched

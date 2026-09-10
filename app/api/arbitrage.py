@@ -40,15 +40,27 @@ def _iso(dt) -> str | None:
 # 缓存的是【已序列化的字节】而非 dict：1.47MB 的响应每次重新编码要 1.4 秒，
 # 而这份内容在下一次抓取落库前是完全不变的。
 _RAW_CACHE: dict[str, tuple[tuple, bytes]] = {}
+_RAW_CACHE_MAX = 8          # 每份约 1.6MB；key 含用户可控的 limit/min_sales，
+                            # 不设上限的话反复变参数能把上百 MB 钉在进程里
 _FRESH_CACHE: dict[str, tuple[float, dict]] = {}   # site -> (写入时刻, 结果)
 
 
 def _data_stamp(db, site: str) -> tuple:
+    """数据指纹。必须覆盖所有会影响 /raw 输出的写入路径。
+
+    曾经漏了 sizes_updated_at：us_sizes_service 只 $set available_sizes 与
+    sizes_updated_at，不碰 updated_at，于是尺码刷新后指纹不变、缓存继续
+    命中旧的 in_stock —— 库存列要等下一次价格抓取才跟上。
+    """
     prod, q = db["products"], db["dewu_quotes"]
     newest_p = prod.find_one({"site": site}, {"updated_at": 1},
                              sort=[("updated_at", -1)]) or {}
+    newest_s = prod.find_one({"site": site, "sizes_updated_at": {"$ne": None}},
+                             {"sizes_updated_at": 1},
+                             sort=[("sizes_updated_at", -1)]) or {}
     newest_q = q.find_one({}, {"fetched_at": 1}, sort=[("fetched_at", -1)]) or {}
-    return (str(newest_p.get("updated_at")), prod.count_documents({"site": site}),
+    return (str(newest_p.get("updated_at")), str(newest_s.get("sizes_updated_at")),
+            prod.count_documents({"site": site}),
             str(newest_q.get("fetched_at")), q.estimated_document_count())
 
 
@@ -210,38 +222,15 @@ def promos(limit: int = Query(30, ge=1, le=200)):
 
 @router.get("/fx", summary="实时汇率（USD 基准）")
 def fx():
-    """取实时汇率。open.er-api 为主，frankfurter(ECB) 兜底，都失败则回落配置值。"""
-    import requests
-    from app.core.config import load_config
-    from app.core.pricing import get_pricing_config
+    """统一走 app.core.fx —— 那里的兜底覆盖全部站点币种。
 
-    for name, url, pick in (
-        ("open.er-api", "https://open.er-api.com/v6/latest/USD",
-         lambda d: (d["rates"], d.get("time_last_update_utc", ""))),
-        ("frankfurter", "https://api.frankfurter.app/latest?from=USD&to=CNY,HKD,KRW,JPY,GBP,CAD,EUR",
-         lambda d: (d["rates"], d.get("date", ""))),
-    ):
-        try:
-            d = requests.get(url, timeout=12).json()
-            rates, ts = pick(d)
-            cny = rates["CNY"]
-            from datetime import datetime as _dt
-            out = {"source": name, "updated": ts, "live": True,
-                   "fetched_at": _iso(_dt.utcnow()),
-                   "usd_cny": round(cny, 4), "usd_hkd": round(rates["HKD"], 4)}
-            # 各站本币 -> 人民币，供前端按 site 取用
-            for cur in ("KRW", "JPY", "GBP", "CAD", "EUR"):
-                if cur in rates and rates[cur]:
-                    out[f"{cur.lower()}_cny"] = round(cny / rates[cur], 6)
-                    out[f"usd_{cur.lower()}"] = round(rates[cur], 4)
-            out["usd_cny_rate"] = round(cny, 4)
-            return out
-        except Exception:
-            continue
+    此前这里的配置兜底只有 usd_cny / usd_hkd / krw_cny，日英加三站
+    拿不到 key，前端就回落成 7.12 当本币汇率，成本虚高上百倍。
+    """
+    from app.core.fx import get_rates
 
-    cfg = get_pricing_config(load_config())["fx"]
-    return {"source": "config", "usd_cny": cfg["usd_cny"], "usd_hkd": cfg["usd_hkd"],
-            "krw_cny": cfg.get("krw_cny", 0.0052), "updated": "", "live": False}
+    r = get_rates()
+    return {**r, "fetched_at": _iso(__import__("datetime").datetime.utcnow())}
 
 
 @router.get("/raw", summary="尺码级原始数据（供前端自行试算）")
@@ -338,6 +327,8 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
                "sell_cn_fees": cfg["sell_cn"], "sell_hk_fees": cfg["sell_hk"],
                "products": out_prods, "items": rows}
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    if len(_RAW_CACHE) >= _RAW_CACHE_MAX:
+        _RAW_CACHE.pop(next(iter(_RAW_CACHE)))       # 简单 FIFO，够用
     _RAW_CACHE[key] = (stamp, body)
     return Response(content=body, media_type="application/json",
                     headers={"X-Cache": "MISS"})

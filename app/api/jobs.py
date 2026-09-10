@@ -83,8 +83,8 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
                 return
             restock = res.get("restock") or {}
             new_skus = res.get("new_skus") or []
-            if not restock and not new_skus:
-                return
+            # 注意别在这里因为「没补货也没新品」就 return —— 尺码写法告警
+            # 与这两者无关，那样会拖到下一次「刚好有补货」的抓取才发出。
             from app.dao.mongo_client import MongoConnection
             from app.services.new_product_service import NewProductService
             from app.services.restock_service import RestockService

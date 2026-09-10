@@ -26,6 +26,8 @@ PAGE_SIZE     = 48
 SLEEP_SEC     = 1.5        # PLP 翻页间隔（秒）
 MAX_RETRIES   = 3
 PLP_WORKERS   = 8          # PLP 翻页并发线程（每个分类）
+# 本轮抓到的 SKU 数低于库里已有的这个比例，判定为抓取异常而非「真的没货」
+HEALTH_MIN_RATIO = 0.6
 
 # availability 并发配置
 AVAIL_WORKERS   = 16       # 默认并发线程数
@@ -585,9 +587,28 @@ def run_full_scan(
     deduped = list(seen.values())
     _report("dedupe", f"去重后: {len(deduped)} 个唯一 SKU")
 
+    # 健康门槛，与国际站同一套。美国站是最大的站，之前偏偏没有 ——
+    # 英国站那次「八个分类全超时、拿到 0 个 SKU 却平静打印完成」的模式
+    # 在这里同样成立，而且影响 1.4 万条商品。
+    conn = MongoConnection.from_environment(required=True)
+    try:
+        prev_us = conn.db["products"].count_documents({"site": "us"})
+    finally:
+        pass
+    ratio = (len(deduped) / prev_us) if prev_us else 1.0
+    if prev_us and ratio < HEALTH_MIN_RATIO:
+        msg = (f"【抓取异常】美国站本轮 {len(deduped)} 个 SKU，库里已有 {prev_us} 个，"
+               f"仅 {ratio:.0%}（门槛 {HEALTH_MIN_RATIO:.0%}）。已放弃写库，保留原有数据。")
+        _report("health", msg)
+        conn.close()
+        return {"batch_id": None, "total_skus": len(deduped), "healthy": False,
+                "error": msg, "prev_total": prev_us,
+                "new_count": 0, "new_skus": [], "categories": {},
+                "with_sale": 0, "sold_out": 0, "price_range": None,
+                "include_sizes": include_sizes}
+
     batch_id = f"price_{ts}"
     _report("mongo_price", "写入价格数据到 MongoDB ...")
-    conn = MongoConnection.from_environment(required=True)
     try:
         product_dao = ProductDAO(conn.db)
         stat = product_dao.upsert_products(
@@ -628,6 +649,8 @@ def run_full_scan(
         "sold_out": len(sold_out),
         "price_range": [min(prices), max(prices)] if prices else None,
         "include_sizes": include_sizes,
+        "healthy": True,
+        "prev_total": prev_us,
         "new_count": len(new_skus),
         "new_skus": new_skus,
     }

@@ -14,7 +14,18 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
-import dewu_client as dc
+# dewu_client 是隔壁仓库 yqin7/dewu-monitor 提供的包（见 requirements.txt）。
+# 不在模块顶层 import：app.main 启动就会连带导入本模块，缺这个依赖时
+# 整个服务起不来 —— 而只有得物相关的任务真正需要它，比价页读库就能跑。
+def _dc():
+    try:
+        import dewu_client as dc
+        return dc
+    except ImportError as exc:
+        raise RuntimeError(
+            "缺少 dewu_client。安装：pip install "
+            "'dewu-client @ git+https://github.com/yqin7/dewu-monitor.git'"
+            "（私有仓库，需先配好 GitHub 凭证）") from exc
 
 from app.core.config import load_config
 from app.core.pricing import evaluate, get_pricing_config, passes_filter
@@ -41,7 +52,7 @@ def _fetch_one(sku: str, region: str, currency: str) -> tuple[str, dict | None, 
     """
     for attempt in range(MAX_RETRIES):
         try:
-            r = dc.query_article_full(sku, region=region, currency=currency)
+            r = _dc().query_article_full(sku, region=region, currency=currency)
             return sku, (r if r.get("found") else None), False
         except Exception as exc:
             msg = str(exc)
@@ -57,6 +68,7 @@ def _catalog_one(sku: str) -> tuple[str, dict | None, bool]:
     """接口140：货号 -> 各尺码 globalSkuId。返回 (sku, info, 是否失败)。"""
     for attempt in range(MAX_RETRIES):
         try:
+            dc = _dc()
             info = dc.get_skus_by_article(sku, region=dc.CATALOG_REGION)
             return sku, (info or None), False
         except Exception as exc:
@@ -100,7 +112,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     conn = MongoConnection.from_environment(required=True)
     dao = ArbitrageDAO(conn.db)
     dao.ensure_indexes()
-    dc.load_env()
+    _dc().load_env()
 
     q: dict[str, Any] = {}
     if only_discounted:
@@ -178,11 +190,11 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         return {}
 
     def _price(c):
-        return _retrying(lambda x: dc.batch_price(x, region=region, currency=currency),
+        return _retrying(lambda x: _dc().batch_price(x, region=region, currency=currency),
                          c, "批量价格")
 
     def _sales(c):
-        return _retrying(dc.batch_sales, c, "批量销量")
+        return _retrying(lambda x: _dc().batch_sales(x), c, "批量销量")
 
     saved = 0
     dewu_size_pairs: list[tuple[str, str]] = []   # 得物侧尺码写法，整轮末尾统一登记
@@ -259,6 +271,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
 
 
 def compute(*, market: str = "CN", apply_filter: bool = True,
+            sites: list[str] | None = None,
             progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     """用定价模型计算套利机会，写入 arbitrage 集合（尺码级）。"""
     def report(msg: str) -> None:
@@ -271,10 +284,41 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
     dao.ensure_indexes()
     cfg = get_pricing_config(load_config())
 
-    products = {d["sku"]: d for d in conn.db["products"].find(
-        {}, {"sku": 1, "name": 1, "category": 1, "orig_price": 1,
-             "sale_price": 1, "url": 1, "is_sold_out": 1,
-             "promo_code": 1, "promo_rate": 1})}
+    # 必须按站点取，且把本币折成美元。
+    # 曾经这里是 find({}) 后按 sku 收敛成字典 —— 五个站的同一货号只剩最后
+    # 遍历到的那条，KRW/JPY/GBP 价格被当成美元送进 evaluate()。实测 6,067 个
+    # 有报价的货号里只有 970 个拿到美国站记录，其余 5,215 个算出天价成本后
+    # 被 passes_filter 静默丢弃 —— arbitrage 表长期只有一百多条就是这么来的。
+    from app.core.fx import SITE_CURRENCY, get_rates, to_usd
+
+    picked = [x for x in (sites or list(SITE_CURRENCY)) if x in SITE_CURRENCY]
+    rates = get_rates()
+    if not rates.get("live"):
+        report("警告：实时汇率获取失败，本轮用兜底汇率，利润仅供参考")
+    # 定价模型里的 fx 原先只读静态配置（usd_cny 写死 7.12，实际约 6.7），
+    # 6% 的偏差直接乘在每一单收入上。这里用实时值覆盖。
+    cfg["fx"] = {**cfg.get("fx", {}),
+                 "usd_cny": rates["usd_cny"], "usd_hkd": rates["usd_hkd"]}
+    report(f"汇率：USD→CNY {rates['usd_cny']}，HKD→CNY "
+           f"{rates['usd_cny'] / rates['usd_hkd']:.4f}（{rates['source']}）")
+
+    products: dict[str, dict] = {}
+    for d in conn.db["products"].find(
+            {"site": {"$in": picked}},
+            {"sku": 1, "site": 1, "currency": 1, "name": 1, "category": 1,
+             "orig_price": 1, "sale_price": 1, "url": 1, "is_sold_out": 1,
+             "promo_code": 1, "promo_rate": 1}):
+        local = d.get("sale_price") or d.get("orig_price")
+        if not local:
+            continue
+        cur = d.get("currency") or SITE_CURRENCY.get(d.get("site", "us"), "USD")
+        d["_usd"] = to_usd(local, cur, rates)
+        # 同一货号多个站都有时，留采购成本最低的那个 —— 比价本来就该挑最便宜的进货地
+        cur_best = products.get(d["sku"])
+        if cur_best is None or d["_usd"] < cur_best["_usd"]:
+            products[d["sku"]] = d
+    report(f"候选商品 {len(products)} 个货号（站点 {','.join(picked)}，"
+           f"同货号取最低价站点）")
 
     rows: list[dict] = []
     considered = 0
@@ -283,9 +327,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
         p = products.get(sku)
         if not p:
             continue
-        usd = p.get("sale_price") or p.get("orig_price")
-        if not usd:
-            continue
+        usd = p["_usd"]
 
         for size in quote.get("sizes", []):
             price = size.get("globalMinPrice")
@@ -304,8 +346,11 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
                 "category": p.get("category"),
                 "url": p.get("url"),
                 "is_sold_out": p.get("is_sold_out", False),
+                "site": p.get("site"),
+                "local_price": p.get("sale_price") or p.get("orig_price"),
+                "local_currency": p.get("currency"),
                 "adidas_list_usd": p.get("orig_price"),
-                "adidas_price_usd": usd,
+                "adidas_price_usd": round(usd, 2),
                 "promo_code": p.get("promo_code"),
                 "promo_rate": p.get("promo_rate"),
                 "after_promo_usd": res["cost"]["after_promo_usd"],
@@ -321,6 +366,9 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
                 "global_sku_id": size.get("globalSkuId"),
             })
 
-    written = dao.replace_arbitrage(rows)
-    report(f"比价完成：评估 {considered} 个尺码，入选 {len(rows)}，写入 {written}")
-    return {"considered": considered, "selected": len(rows), "written": written}
+    st = dao.replace_arbitrage(rows)
+    report(f"比价完成：评估 {considered} 个尺码，入选 {len(rows)}，"
+           f"写入 {st['written']}，清掉已失效 {st['removed']}")
+    return {"considered": considered, "selected": len(rows),
+            "written": st["written"], "removed": st["removed"],
+            "sites": picked, "fx_live": rates.get("live")}

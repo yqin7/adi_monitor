@@ -170,11 +170,14 @@ def normalize(raw: str) -> tuple[str, str | int] | None:
     return None
 
 
-def sizes_match(a: str, b: str, tolerance_mm: int = 6) -> bool:
+def sizes_match(a: str, b: str, tolerance_mm: int = 2) -> bool:
     """两个尺码是否指同一档。
 
-    鞋按毫米比，容差 ±6mm：EU 三分制取整有 2~3mm 误差，
-    日码(cm)按鞋楦长标注、比 EU 对照毫米小 5mm 左右，都要能吸收。
+    鞋按毫米比，容差 ±2mm 只用来吸收换算表的取整误差。
+    曾经是 6mm —— 但各尺度归一化后都落在同一个 5mm 网格上，6mm 比档位间隔
+    还大，导致相邻码互相匹配：sizes_match("42", "42 2/3") 会返回 True，
+    库存列因此出现假「有货」。实测容差 0 与 2 结果完全一致（同一 SKU 跨四站
+    57/84），而 6 会多出 20 个相邻档误配。
     """
     na, nb = normalize(a), normalize(b)
     if not na or not nb:
@@ -188,7 +191,7 @@ def sizes_match(a: str, b: str, tolerance_mm: int = 6) -> bool:
     return na[1] == nb[1]
 
 
-def in_stock(dewu_size: str, available: Iterable[str], tolerance_mm: int = 6) -> bool | None:
+def in_stock(dewu_size: str, available: Iterable[str], tolerance_mm: int = 2) -> bool | None:
     """得物的某个尺码，在 Adidas 侧是否有货。
 
     available 为空/缺失时返回 None（未知），不要当成「无货」——

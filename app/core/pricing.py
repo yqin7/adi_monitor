@@ -101,22 +101,36 @@ def payout_cn(dewu_price_cny: float, cfg: Dict[str, Any]) -> Dict[str, float]:
     }
 
 
-def payout_hk(dewu_price_hkd: float, cfg: Dict[str, Any]) -> Dict[str, float]:
-    """得物香港到手价（港币）。操作服务费按 threshold 分档。"""
+def payout_hk(dewu_price_cny: float, cfg: Dict[str, Any]) -> Dict[str, float]:
+    """得物香港到手价，全程以人民币计。
+
+    要点：接口查到的报价本身就是【香港报价、人民币结算】，
+    但 sell_hk 里的固定费与分档阈值（技术费下限 18、操作费 44/62、门槛 350）
+    都是【港币】口径 —— 必须先折成人民币再扣，否则等于按 1:1 当人民币扣，
+    每单多扣三四十块。前端早就按 hkd2cny 折算了，服务端这里一直没跟上。
+    """
     s = cfg["sell_hk"]
-    tech = max(dewu_price_hkd * s["tech_fee_rate"], s["tech_fee_min"])
-    operate = s["operate_fee_low"] if dewu_price_hkd < s["threshold"] else s["operate_fee_high"]
-    transfer = dewu_price_hkd * s["transfer_fee_rate"]
-    payout = dewu_price_hkd - tech - operate - transfer
+    fx = cfg.get("fx", {})
+    usd_cny = fx.get("usd_cny") or 7.12
+    usd_hkd = fx.get("usd_hkd") or 7.80
+    hkd2cny = usd_cny / usd_hkd if usd_hkd else 0.857
+
+    tech = max(dewu_price_cny * s["tech_fee_rate"], s["tech_fee_min"] * hkd2cny)
+    threshold_cny = s["threshold"] * hkd2cny
+    operate = (s["operate_fee_low"] if dewu_price_cny < threshold_cny
+               else s["operate_fee_high"]) * hkd2cny
+    transfer = dewu_price_cny * s["transfer_fee_rate"]
+    payout = dewu_price_cny - tech - operate - transfer
 
     return {
-        "quoted_price": round(dewu_price_hkd, 2),
-        "sale_base": round(dewu_price_hkd, 2),
+        "quoted_price": round(dewu_price_cny, 2),
+        "sale_base": round(dewu_price_cny, 2),
         "tech_fee": round(tech, 2),
-        "operate_fee": float(operate),
+        "operate_fee": round(operate, 2),
         "transfer_fee": round(transfer, 2),
         "payout": round(payout, 2),
-        "currency": "HKD",
+        "hkd2cny": round(hkd2cny, 4),
+        "currency": "CNY",
     }
 
 
@@ -134,8 +148,9 @@ def evaluate(list_price_usd: float, dewu_price: float, cfg: Dict[str, Any],
     fx = cfg["fx"]
 
     if market.upper() == "HK":
+        # payout_hk 现在返回人民币，成本也必须用人民币，否则收入/成本两套币种
         payout = payout_hk(dewu_price, cfg)
-        cost_local = cost["cost_usd"] * fx["usd_hkd"]
+        cost_local = cost["cost_usd"] * fx["usd_cny"]
     else:
         payout = payout_cn(dewu_price, cfg)
         cost_local = cost["cost_usd"] * fx["usd_cny"]

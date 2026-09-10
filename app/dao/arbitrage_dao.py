@@ -151,14 +151,26 @@ class ArbitrageDAO:
                 "buckets": buckets}
 
     # ── 套利结果 ──────────────────────────────────────────────────────────
-    def replace_arbitrage(self, rows: list[dict]) -> int:
+    def replace_arbitrage(self, rows: list[dict]) -> dict[str, int]:
+        """整表替换：写入本轮结果，并清掉本轮不再成立的旧机会。
+
+        原先只 upsert 不删 —— 名字叫 replace 却不 replace，昨天入选、
+        今天价格变了已经不划算的行会永远留在 /arbitrage 列表里。
+        用同一个 computed_at 打标，写完删掉所有更早的记录。
+        """
+        now = datetime.utcnow()
         if not rows:
-            return 0
+            removed = self.arb.delete_many({}).deleted_count
+            return {"written": 0, "removed": removed}
         ops = [UpdateOne({"sku": r["sku"], "size": r["size"]},
-                         {"$set": {**r, "computed_at": datetime.utcnow()}}, upsert=True)
+                         {"$set": {**r, "computed_at": now}}, upsert=True)
                for r in rows]
-        res = self.arb.bulk_write(ops, ordered=False)
-        return (res.upserted_count or 0) + (res.modified_count or 0)
+        written = 0
+        for i in range(0, len(ops), 1000):
+            res = self.arb.bulk_write(ops[i:i + 1000], ordered=False)
+            written += (res.upserted_count or 0) + (res.modified_count or 0)
+        removed = self.arb.delete_many({"computed_at": {"$lt": now}}).deleted_count
+        return {"written": written, "removed": removed}
 
     def query_arbitrage(self, *, sort_by: str = "profit", order: str = "desc",
                         limit: int = 50, offset: int = 0,
