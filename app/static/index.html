@@ -213,16 +213,12 @@
     <div class="grid">
       <div class="f"><label>排序</label>
         <select id="sortBy"><option value="profit_cn">国内净利</option>
-          <option value="profit_hk">香港净利</option>
-          <option value="profit">净利(较优)</option>
           <option value="roi">利润率 ROI</option>
           <option value="monthly_sales">月销</option>
           <option value="dewu_age_h">得物报价最旧优先</option></select></div>
       <div class="f"><label>最低月销</label><input id="minSales" type="number" value="20"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤，负利润也显示">最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
       <div class="f"><label class="tip" data-tip="留空则不过滤">最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
-      <div class="f"><label>香港到手</label>
-        <select id="posHk"><option value="0">全部</option><option value="1">仅利润为正</option></select></div>
       <div class="f"><label>国内到手</label>
         <select id="posCn"><option value="0">全部</option><option value="1">仅利润为正</option></select></div>
       <div class="f"><label class="tip" data-tip="得物价格会变，过旧的报价算出的利润不可信">得物报价</label>
@@ -259,11 +255,10 @@
         <th data-k="hk_global" class="num" title="同一个 globalMinPrice 按 currency=HKD 查回的值。实测与得物 App 里中国买家的实付价几乎相等（49 个尺码，买家端/此值均值 0.9886）。2026-09-10 之前抓的数据没有这一项，显示为空，下一轮抓取后补上">香港</th>
         <th data-k="cn_price" class="num" title="CN × 1.155，即买家端实付价的估计值">国内 ¥</th>
         <th data-k="payout_cn" class="num" title="国内价 × (1−5%−1%−2.5%) − 38 − 10">国内到手</th>
-        <th data-k="profit_hk" class="num">香港净利</th>
         <th data-k="profit_cn" class="num">国内净利</th>
-        <th data-k="roi" class="num" title="取两边较优">ROI</th>
+        <th data-k="roi" class="num" title="国内净利 ÷ 到岸成本。成本 = 货款折人民币 + 运费">ROI</th>
         <th data-k="monthly_sales" class="num">月销</th>
-        <th class="num">环比</th>
+        <th class="num" title="得物接口返回的 globalMonthToMonthRatio，30 天销量环比，我们不做二次计算">环比</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -282,7 +277,7 @@
 
 <script>
 const $ = s => document.querySelector(s);
-let RAW = [], FEES = null, FEES_HK = null, sortBy = 'profit_cn', order = 'desc';
+let RAW = [], FEES = null, sortBy = 'profit_cn', order = 'desc';
 let SITE = 'us', FX = null, loadSeq = 0;
 let page = 0, pageSize = 100, lastRows = [];
 /* 各站已加载的原始响应。切国家来回看很常见，没必要每次重新请求 4MB。
@@ -371,41 +366,28 @@ function calc(r) {
   const costCny = netUsd * num('fx') + shipCny;        // 到岸总成本
 
   // ── 得物到手价：国内 / 香港两套口径同时计算，并列展示 ────────────────
-  // 接口查到的 dewu_price 就是【香港报价】，结算单位人民币；
-  // 国内报价 = 香港报价 × 1.09（电商税差）。两边全程人民币计价。
-  const hkPrice = r.dewu_price;
+  // 接口返回的原始报价（globalMinPrice，currency=CNY），前端列名「CN」。
+  // 实测它 × 1.155 ≈ 得物 App 里买家的实付价，系数由 49 个尺码标定。
+  const cnBase = r.dewu_price;
 
-  // 香港：技术服务费 5%（最低18 HKD）、操作服务费按 350 HKD 分档 44/62 HKD、银行转账 1%
-  // 注意：阈值与固定费均以【港币】计价，而报价是人民币结算，需按 HKD→CNY 折算后再比。
-  const h = FEES_HK || {tech_fee_rate:0.05, tech_fee_min:18, transfer_fee_rate:0.01,
-                        threshold:350, operate_fee_low:44, operate_fee_high:62};
-  const hkd2cny = (FX && FX.usd_hkd) ? FX.usd_cny / FX.usd_hkd : 0.857;
-  const hkTech = Math.max(hkPrice * h.tech_fee_rate, h.tech_fee_min * hkd2cny);
-  const hkOperate = (hkPrice < h.threshold * hkd2cny
-                     ? h.operate_fee_low : h.operate_fee_high) * hkd2cny;
-  const payoutHk = hkPrice - hkTech - hkOperate - hkPrice * h.transfer_fee_rate;
-
-  // 国内：香港报价×1.09 为成交基数，扣 技术5%+转账1%+售后无忧2.5% + 操作38 + 邮费补贴10
+  // 国内卖出：成交基数扣 技术5% + 转账1% + 售后无忧2.5%，再减 操作38 + 邮费补贴10
   const f = FEES || {tax_rate:0.155, tech_fee_rate:0.05, transfer_fee_rate:0.01,
                      after_sale_rate:0.025, operate_fee:38, postage_subsidy:10};
-  const cnPrice = hkPrice * (1 + f.tax_rate);
+  const cnPrice = cnBase * (1 + f.tax_rate);
   const payoutCn = cnPrice * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)
                    - f.operate_fee - f.postage_subsidy;
 
   const costLocal = costCny;
   const profitCn = payoutCn - costLocal;
-  const profitHk = payoutHk - costLocal;
-  // 排序/筛选以「更优的一边」为准
-  const profit = Math.max(profitCn, profitHk);
+  // 只保留国内这一条路：接口给的不是香港挂牌价，那套港币费用模型没有真实标的，
+  // 香港到手/香港净利两列已移除，profit 与 ROI 都以国内口径为准。
+  const profit = profitCn;
   return {...r, after_promo: afterPromo, cashback, net_usd: netUsd, ship_cny: shipCny,
           dewu_age_h: ageH(r.dewu_at),
-          hk_price: hkPrice, cn_price: cnPrice,
+          hk_price: cnBase, cn_price: cnPrice,
           hk_global: r.dewu_price_hk ?? null,
-          payout_hk: payoutHk, payout_cn: payoutCn,
-          profit_hk: profitHk, profit_cn: profitCn,
+          payout_cn: payoutCn, profit_cn: profitCn,
           cost_cny: costLocal, payout: payoutCn, profit,
-          roi_cn: costLocal ? profitCn / costLocal : 0,
-          roi_hk: costLocal ? profitHk / costLocal : 0,
           roi: costLocal ? profit / costLocal : 0};
 }
 
@@ -452,7 +434,6 @@ function render() {
   const minProfit = lim('minProfit');
   const minRoiPct = lim('minRoi');
   const stockOnly = $('#stockOnly').value === '1';
-  const posHk = $('#posHk').value === '1';
   const posCn = $('#posCn').value === '1';
   const cat = $('#catFilter').value;
   const maxAgeH = Number($('#quoteAge').value || 0) * 24;
@@ -462,7 +443,6 @@ function render() {
     && (minProfit === null || r.profit >= minProfit)
     && (minRoiPct === null || r.roi >= minRoiPct / 100)
     && (!stockOnly || r.in_stock === true)
-    && (!posHk || r.profit_hk > 0)
     && (!posCn || r.profit_cn > 0)
     && (!cat || r.category === cat)
     && (!maxAgeH || (r.dewu_age_h != null && r.dewu_age_h <= maxAgeH)));
@@ -517,7 +497,6 @@ function render() {
       <td class="num">${r.hk_global != null ? fmt(r.hk_global) : '<span class="stk unk">—</span>'}</td>
       <td class="num">${fmt(r.cn_price)}</td>
       <td class="num">${fmt(r.payout_cn)}</td>
-      <td class="num ${r.profit_hk > 0 ? 'pos' : 'neg'}">${r.profit_hk > 0 ? '+' : ''}${fmt(r.profit_hk)}</td>
       <td class="num ${r.profit_cn > 0 ? 'pos' : 'neg'}">${r.profit_cn > 0 ? '+' : ''}${fmt(r.profit_cn)}</td>
       <td class="num ${cls}">${(r.roi * 100).toFixed(0)}%</td>
       <td class="num">${fmt(r.monthly_sales)}</td>
@@ -599,7 +578,7 @@ async function loadData() {
     // 服务端把商品信息按货号存一份（name/url 原本随每个尺码重复），这里摊平回扁平结构
     const P = d.products || {};
     RAW = (d.items || []).map(r => ({...(P[r.sku] || {}), ...r}));
-    FEES = d.sell_cn_fees; FEES_HK = d.sell_hk_fees;
+    FEES = d.sell_cn_fees;
     fillCategories();
     render();
     loadFreshness();
@@ -653,7 +632,7 @@ $('#reset').onclick = () => {
   $('#promo').value = '';
   ['rakuten','rmn','bank','ship','tax'].forEach((k, i) => $('#' + k).value = ['',0,3,0,0][i]);
   $('#minSales').value = 20; $('#minProfit').value = ''; $('#minRoi').value = '';
-  $('#stockOnly').value = '0'; $('#posHk').value = '0'; $('#posCn').value = '0';
+  $('#stockOnly').value = '0'; $('#posCn').value = '0';
   $('#quoteAge').value = '0';
   $('#catFilter').value = '';
   loadFx().then(render);
@@ -670,7 +649,6 @@ $('#catFilter').onchange = e => {
   e.target.classList.toggle('active', !!e.target.value);
   page = 0; render();
 };
-$('#posHk').onchange = () => { page = 0; render(); };
 $('#posCn').onchange = () => { page = 0; render(); };
 document.querySelectorAll('th[data-k]').forEach(th => th.onclick = (ev) => {
   if (ev.target.tagName === 'SELECT') return;
