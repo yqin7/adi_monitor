@@ -19,7 +19,7 @@ DEFAULTS: Dict[str, Any] = {
     "fx": {"usd_cny": 7.12, "usd_hkd": 7.80, "krw_cny": 0.0052},
     "purchase": {"sales_tax": 0.0, "promo_rate": 1.0,
                  "cashback_bank": 0.0, "cashback_portal": 0.0},
-    "sell_cn": {"tax_rate": 0.09, "tech_fee_rate": 0.05, "transfer_fee_rate": 0.01,
+    "sell_cn": {"tax_rate": 0.155, "tech_fee_rate": 0.05, "transfer_fee_rate": 0.01,
                 "after_sale_rate": 0.025, "operate_fee": 38, "postage_subsidy": 10},
     "sell_hk": {"tech_fee_rate": 0.05, "tech_fee_min": 18, "transfer_fee_rate": 0.01,
                 "threshold": 350, "operate_fee_low": 44, "operate_fee_high": 62},
@@ -76,7 +76,12 @@ def purchase_cost_usd(list_price_usd: float, cfg: Dict[str, Any],
 def payout_cn(dewu_price_cny: float, cfg: Dict[str, Any]) -> Dict[str, float]:
     """得物国内到手价。dewu_price_cny 为海外接口查得的价格（不含电商税）。"""
     s = cfg["sell_cn"]
-    base = dewu_price_cny * (1 + s["tax_rate"])          # 国内成交基数
+    # 国内成交基数 = 接口查得的香港报价 × (1 + tax_rate)。
+    # 系数由实测标定：2026-09-10 拿 B75806(鞋20码) + IJ7058(服装7码) 共 27 个
+    # 尺码，对照得物 App 买家端渠道最低价，倍数均值 1.1547、标准差 0.0048
+    # （变异系数 0.42%），过原点最小二乘 1.1540。取 1.155 时平均偏差 1.7 元。
+    # 原先的 0.09 系统性低估约 6%，27 件累计少算 701 元。
+    base = dewu_price_cny * (1 + s["tax_rate"])
     tech = base * s["tech_fee_rate"]
     transfer = base * s["transfer_fee_rate"]
     after_sale = base * s["after_sale_rate"]

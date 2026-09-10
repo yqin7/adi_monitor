@@ -258,7 +258,7 @@
         <th data-k="cost_cny" class="num" id="thCost" title="货款折算 + 运费">成本 ¥</th>
         <th data-k="hk_price" class="num" title="得物API查到的香港报价，人民币结算">香港 ¥</th>
         <th data-k="payout_hk" class="num" title="香港报价 − max(5%,18) − 操作费(<350收44/≥350收62) − 1%转账">香港到手</th>
-        <th data-k="cn_price" class="num" title="香港价 × 1.09（电商税）">国内 ¥</th>
+        <th data-k="cn_price" class="num" title="香港价 × 1.155（实测标定：对照得物买家端渠道最低价）">国内 ¥</th>
         <th data-k="payout_cn" class="num" title="国内价 × (1−5%−1%−2.5%) − 38 − 10">国内到手</th>
         <th data-k="profit_hk" class="num">香港净利</th>
         <th data-k="profit_cn" class="num">国内净利</th>
@@ -387,7 +387,7 @@ function calc(r) {
   const payoutHk = hkPrice - hkTech - hkOperate - hkPrice * h.transfer_fee_rate;
 
   // 国内：香港报价×1.09 为成交基数，扣 技术5%+转账1%+售后无忧2.5% + 操作38 + 邮费补贴10
-  const f = FEES || {tax_rate:0.09, tech_fee_rate:0.05, transfer_fee_rate:0.01,
+  const f = FEES || {tax_rate:0.155, tech_fee_rate:0.05, transfer_fee_rate:0.01,
                      after_sale_rate:0.025, operate_fee:38, postage_subsidy:10};
   const cnPrice = hkPrice * (1 + f.tax_rate);
   const payoutCn = cnPrice * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)

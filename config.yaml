@@ -62,7 +62,9 @@ pricing:
     cashback_portal: 0.10       # 返利门户返现（Rakuten / RetailMeNot 互斥，填最高的那个）
 
   sell_cn:                      # 国内卖出
-    tax_rate: 0.09              # 电商税，海外查得价 × (1 + tax_rate) = 国内成交基数
+    tax_rate: 0.155             # 香港报价 -> 国内成交基数的换算系数（含电商税与平台加价）
+                                # 实测标定：27 个尺码对照买家端渠道最低价，倍数 1.1547±0.0048
+                                # 详见 app/core/pricing.py 里的说明
     tech_fee_rate: 0.05         # 技术服务费
     transfer_fee_rate: 0.01     # 银行转账费
     after_sale_rate: 0.025      # 售后无忧
