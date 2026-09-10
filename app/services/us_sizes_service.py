@@ -124,7 +124,18 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     sh.ensure_indexes()
     diff = sh.record_changes("us", collected,
                              batch_id=datetime.now().strftime("us_sizes_%Y%m%d_%H%M%S"))
+
+    from app.dao.unparsed_size_dao import UnparsedSizeDAO
+    usd = UnparsedSizeDAO(conn.db)
+    usd.ensure_indexes()
+    unparsed = usd.record("site", "us",
+                          ((z, sku) for sku, zs in collected.items() for z in zs))
+    if unparsed["new"]:
+        report(f"发现 {len(unparsed['new'])} 种新的尺码写法："
+               f"{', '.join(repr(x) for x in unparsed['new'][:5])}"
+               f"{' …' if len(unparsed['new']) > 5 else ''}")
     report(f"美国站尺码补全完成：{len(collected)} 个 SKU，更新 {written} 条；"
            f"补货 {len(diff['new_in_stock'])} 个，断码 {len(diff['went_out_of_stock'])} 个")
     return {"skus": len(collected), "updated": written, "healthy": True,
+            "unparsed_sizes": unparsed["new"],
             "restock": diff["new_in_stock"], "out_of_stock": diff["went_out_of_stock"]}

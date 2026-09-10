@@ -184,6 +184,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         return _retrying(dc.batch_sales, c, "批量销量")
 
     saved = 0
+    dewu_size_pairs: list[tuple[str, str]] = []   # 得物侧尺码写法，整轮末尾统一登记
     for gi in range(0, len(skus_sorted), SAVE_EVERY):
         if should_stop and should_stop():
             report(f"已请求停止，已落库 {saved} 个货号")
@@ -224,6 +225,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                 "totalSoldNum30": sum(x.get("globalSoldNum30") or 0 for x in sizes),
             })
             dao.save_quote(sku, payload)
+            dewu_size_pairs.extend((z.get("size"), sku) for z in sizes if z.get("size"))
             saved += 1
         extra = ""
         if retry_stat["rate_limited"] or retry_stat["gave_up"]:
@@ -234,8 +236,20 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                f"[本组 {time.time() - t_group:.0f}s]{extra}")
 
     report(f"报价补全完成：命中 {saved}，未命中 {miss}，失败 {errors}")
+
+    # 得物侧的尺码写法也要登记 —— 官网和得物两边都可能冒出新格式，
+    # 而库存匹配是两边归一化后比对，任一边解析不了都会让那一格变成未知。
+    from app.dao.unparsed_size_dao import UnparsedSizeDAO
+    usd = UnparsedSizeDAO(conn.db)
+    usd.ensure_indexes()
+    unparsed = usd.record("dewu", None, dewu_size_pairs)
+    if unparsed["new"]:
+        report(f"得物侧发现 {len(unparsed['new'])} 种新的尺码写法："
+               f"{', '.join(repr(x) for x in unparsed['new'][:5])}"
+               f"{' …' if len(unparsed['new']) > 5 else ''}")
+
     return {"queried": len(targets), "hit": saved, "miss": miss, "errors": errors,
-            "catalog_cached": len(cached)}
+            "catalog_cached": len(cached), "unparsed_sizes": unparsed["new"]}
 
 
 def compute(*, market: str = "CN", apply_filter: bool = True,

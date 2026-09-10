@@ -12,6 +12,44 @@ router = APIRouter(prefix="/jobs", tags=["任务"])
 
 ALL_SITES = ["us", "kr", "jp", "gb", "ca"]
 
+NL = chr(10)
+
+
+def _alert_unparsed(db, notifier, log) -> None:
+    """新出现的尺码写法：汇总成一条告警，标记后不再重复打扰。
+
+    只报「第一次见到」的写法。存量有 1,366 种，每轮全报的话
+    这功能第一天就会被关掉。
+    """
+    from app.dao.unparsed_size_dao import UnparsedSizeDAO
+
+    dao = UnparsedSizeDAO(db)
+    pending = dao.pending_alerts()
+    if not pending:
+        return
+
+    lines = [f"{r['source']}/{r.get('site') or '-'}  {r['raw']!r} ×{r['count']}"
+             f"  例:{','.join(r.get('sample_skus') or [])}" for r in pending[:15]]
+    more = f"{NL}… 另有 {len(pending) - 15} 种" if len(pending) > 15 else ""
+    text = (f"发现 {len(pending)} 种未支持的尺码写法，"
+            f"这些尺码的库存匹配会显示为未知：{NL}" + NL.join(lines) + more)
+
+    log(f"  【新尺码写法】{len(pending)} 种，已登记待补规则")
+    if notifier:
+        try:
+            notifier.send_notification(
+                sku="-", size="-", name="尺码解析告警", color="",
+                price=None, currency="", status=text[:900])
+        except Exception as exc:
+            log(f"  尺码告警发送失败：{exc}")
+
+    # 有没有通知渠道都要标记，否则下一轮会重复刷同样的内容
+    by_key: dict[tuple, list[str]] = {}
+    for r in pending:
+        by_key.setdefault((r["source"], r.get("site")), []).append(r["raw"])
+    for (src, st), raws in by_key.items():
+        dao.mark_alerted(src, st, raws)
+
 JOBS = {
     "all": "全流程：Adidas 抓取 → 得物报价 → 算利润",
     "adidas": "只抓 Adidas：各国官网 SKU + 尺码",
@@ -67,6 +105,7 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
                         site, new_skus, batch_id=res.get("batch_id"))
                     log(f"  新品 {n['found']} 个，跨站/时间窗去重后上报 {n['reported']}，"
                         f"已通知 {n['notified']}")
+                _alert_unparsed(conn.db, notifier, log)
             finally:
                 conn.close()
 

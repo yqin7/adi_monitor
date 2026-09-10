@@ -211,6 +211,18 @@ def run_site_scan(site: str, category: str | None = None,
             sh = SizeHistoryDAO(conn.db)
             sh.ensure_indexes()
             diff = sh.record_changes(site, sizes_map, batch_id=batch_id)
+
+        # 登记本轮解析不了的尺码写法（不额外查库，用刚抓到的数据）
+        from app.dao.unparsed_size_dao import UnparsedSizeDAO
+        usd = UnparsedSizeDAO(conn.db)
+        usd.ensure_indexes()
+        unparsed = usd.record("site", site,
+                              ((z, x["sku"]) for x in deduped
+                               for z in (x.get("available_sizes") or [])))
+        if unparsed["new"]:
+            report(f"[{label_cn}] 发现 {len(unparsed['new'])} 种新的尺码写法："
+                   f"{', '.join(repr(x) for x in unparsed['new'][:5])}"
+                   f"{' …' if len(unparsed['new']) > 5 else ''}")
     finally:
         conn.close()
 
@@ -220,6 +232,7 @@ def run_site_scan(site: str, category: str | None = None,
     return {"site": site, "total": len(deduped), "discounted": discounted,
             "batch_id": batch_id, "healthy": True, "prev_total": prev,
             "new_count": stat["new_count"], "new_skus": stat["new_skus"],
+            "unparsed_sizes": unparsed["new"],
             "restock": diff["new_in_stock"], "out_of_stock": diff["went_out_of_stock"]}
 
 

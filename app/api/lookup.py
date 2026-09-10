@@ -152,6 +152,36 @@ def unparsed_sizes(site: str | None = Query(None, description="限定站点，�
     }
 
 
+@router.get("/sizes/registry", summary="尺码写法登记表（含首次出现时间）")
+def size_registry(status: str | None = Query(None, description="new | known | resolved"),
+                  source: str | None = Query(None, description="site | dewu"),
+                  limit: int = Query(60, ge=1, le=500)):
+    """与 /sizes/unparsed 的分工：
+
+        unparsed  现算快照，回答「当前有哪些解析不了」
+        registry  持久登记，回答「哪些是【新冒出来】的、什么时候第一次见到」
+
+    抓取时自动登记，新写法汇总成一条告警；补上规则后下一轮自动销账为
+    resolved（记录保留，用来回答「这个写法我们什么时候开始支持的」）。
+    """
+    from app.dao.unparsed_size_dao import UnparsedSizeDAO
+
+    db = MongoConnection.from_environment(required=True).db
+    dao = UnparsedSizeDAO(db)
+    q: dict = {}
+    if status:
+        q["status"] = status
+    if source:
+        q["source"] = source
+    rows = list(dao.coll.find(q, {"_id": 0})
+                .sort([("status", 1), ("count", -1)]).limit(limit))
+    for r in rows:
+        for k in ("first_seen", "last_seen", "alerted_at", "resolved_at"):
+            if r.get(k) is not None:
+                r[k] = _iso(r[k])
+    return {"summary": dao.summary(), "count": len(rows), "items": rows}
+
+
 @router.get("/{article}", summary="按货号查各国售价与尺码库存")
 def lookup(article: str,
            live: bool = Query(False, description="实时调得物接口（消耗调用额度），默认读库")):
