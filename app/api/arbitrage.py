@@ -264,6 +264,7 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
 
     # 只取用到的字段：整份 quote 有 14 个尺码字段，前端只用 5 个
     proj = {"sku": 1, "fetched_at": 1, "sizes.size": 1, "sizes.globalMinPrice": 1,
+            "sizes.hkMinPrice": 1,
             "sizes.globalSoldNum30": 1, "sizes.globalMonthToMonthRatio": 1,
             "sizes.globalSkuId": 1}
     quote_docs = list(dao.quotes.find({}, proj))
@@ -313,6 +314,9 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
                 # 得物接口返回的就是【香港报价】，结算单位人民币(RMB)。
                 # 国内报价 = 香港报价 × 1.09（电商税），由前端换算。
                 "dewu_price": price,
+                # HKD 口径的同一字段。2026-09-10 之前抓的数据没有这一项，
+                # 前端显示为空，等下一轮抓取补上。
+                "dewu_price_hk": sz.get("hkMinPrice"),
                 "monthly_sales": sz.get("globalSoldNum30"),
                 "sales_mom": sz.get("globalMonthToMonthRatio"),
                 "global_sku_id": sz.get("globalSkuId"),

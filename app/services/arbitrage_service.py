@@ -196,6 +196,19 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     def _sales(c):
         return _retrying(lambda x: _dc().batch_sales(x), c, "批量销量")
 
+    def _price_hk(c):
+        """同一批 skuId 再按 HKD 口径查一次。
+
+        实测 countryCode 传 CN 还是 HK 返回完全相同，变的只有 currency —— 
+        所以这里只换 currency。得到的是同一个 globalMinPrice 的港币计价，
+        与得物 App 里中国买家看到的实付价数值上几乎相等（49 个尺码实测
+        买家端/HK 值均值 0.9886）。存下来供前端直接对照，不再靠系数换算。
+        代价是价格类调用翻倍（销量不受影响），整轮约多 50% 请求。
+        """
+        return _retrying(lambda x: _dc().batch_price(x, region="HK", currency="HKD",
+                                                     country_code="HK"),
+                         c, "批量价格HK")
+
     saved = 0
     dewu_size_pairs: list[tuple[str, str]] = []   # 得物侧尺码写法，整轮末尾统一登记
     for gi in range(0, len(skus_sorted), SAVE_EVERY):
@@ -215,10 +228,14 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
             continue
 
         prices: dict[int, dict] = {}
+        prices_hk: dict[int, dict] = {}
         sales: dict[int, dict] = {}
         with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
             for r in ex.map(_price, chunks):
                 prices.update(r)
+        with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
+            for r in ex.map(_price_hk, chunks):
+                prices_hk.update(r)
         with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
             for r in ex.map(_sales, chunks):
                 sales.update(r)
@@ -229,8 +246,12 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
             sizes = []
             for s in info.get("skus", []):
                 gid = s.get("globalSkuId")
+                hk = prices_hk.get(gid) or {}
                 sizes.append({"size": s.get("size"), "globalSkuId": gid,
-                              **prices.get(gid, {}), **sales.get(gid, {})})
+                              **prices.get(gid, {}), **sales.get(gid, {}),
+                              # HKD 口径的同一字段，单独存一份
+                              "hkMinPrice": hk.get("globalMinPrice"),
+                              "hkLeakPrice": hk.get("leakPrice")})
             payload = {k: v for k, v in info.items()
                        if k not in ("skus", "_id", "fetched_at")}
             payload.update({

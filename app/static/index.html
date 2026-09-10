@@ -255,9 +255,9 @@
         <th data-k="price_usd" class="num" id="thPrice">售价 $</th>
         <th data-k="net_usd" class="num" id="thNet" title="货款实付，不含运费">货款 $</th>
         <th data-k="cost_cny" class="num" id="thCost" title="货款折算 + 运费">成本 ¥</th>
-        <th data-k="hk_price" class="num" title="得物接口返回的原始报价（globalMinPrice），人民币结算">API ¥</th>
-        <th data-k="payout_hk" class="num" title="香港报价 − max(5%,18) − 操作费(<350收44/≥350收62) − 1%转账">香港到手</th>
-        <th data-k="cn_price" class="num" title="香港价 × 1.155（实测标定：对照得物买家端渠道最低价）">国内 ¥</th>
+        <th data-k="hk_price" class="num" title="得物接口 globalMinPrice，currency=CNY。乘以 1.155 得到右侧「国内 ¥」——系数由 5 个货号 49 个尺码对照买家端实付价实测标定（1.150~1.157）">CN</th>
+        <th data-k="hk_global" class="num" title="同一个 globalMinPrice 按 currency=HKD 查回的值。实测与得物 App 里中国买家的实付价几乎相等（49 个尺码，买家端/此值均值 0.9886）。2026-09-10 之前抓的数据没有这一项，显示为空，下一轮抓取后补上">香港</th>
+        <th data-k="cn_price" class="num" title="CN × 1.155，即买家端实付价的估计值">国内 ¥</th>
         <th data-k="payout_cn" class="num" title="国内价 × (1−5%−1%−2.5%) − 38 − 10">国内到手</th>
         <th data-k="profit_hk" class="num">香港净利</th>
         <th data-k="profit_cn" class="num">国内净利</th>
@@ -400,6 +400,7 @@ function calc(r) {
   return {...r, after_promo: afterPromo, cashback, net_usd: netUsd, ship_cny: shipCny,
           dewu_age_h: ageH(r.dewu_at),
           hk_price: hkPrice, cn_price: cnPrice,
+          hk_global: r.dewu_price_hk ?? null,
           payout_hk: payoutHk, payout_cn: payoutCn,
           profit_hk: profitHk, profit_cn: profitCn,
           cost_cny: costLocal, payout: payoutCn, profit,
@@ -513,7 +514,7 @@ function render() {
       <td class="num">${fmt(r.net_usd, 2)}</td>
       <td class="num">${fmt(r.cost_cny)}</td>
       <td class="num">${fmt(r.hk_price)}</td>
-      <td class="num">${fmt(r.payout_hk)}</td>
+      <td class="num">${r.hk_global != null ? fmt(r.hk_global) : '<span class="stk unk">—</span>'}</td>
       <td class="num">${fmt(r.cn_price)}</td>
       <td class="num">${fmt(r.payout_cn)}</td>
       <td class="num ${r.profit_hk > 0 ? 'pos' : 'neg'}">${r.profit_hk > 0 ? '+' : ''}${fmt(r.profit_hk)}</td>
