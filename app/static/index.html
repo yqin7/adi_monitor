@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Adidas × 得物 比价</title>
+<title>QY数聚</title>
 <style>
   :root{
     --bg:#f6f7f9; --card:#fff; --text:#1a1d21; --muted:#6b7280;
@@ -174,8 +174,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Adidas × 得物 比价</h1>
-  <div class="sub">填入你的返利与运费，回车即刻重算利润</div>
+  <h1>QY数聚</h1>
 
   <div class="topnav">
     <input id="skuSearch" placeholder="搜货号，如 JE5682（回车）" autocomplete="off">
@@ -256,7 +255,7 @@
         <th data-k="price_usd" class="num" id="thPrice">售价 $</th>
         <th data-k="net_usd" class="num" id="thNet" title="货款实付，不含运费">货款 $</th>
         <th data-k="cost_cny" class="num" id="thCost" title="货款折算 + 运费">成本 ¥</th>
-        <th data-k="hk_price" class="num" title="得物API查到的香港报价，人民币结算">香港 ¥</th>
+        <th data-k="hk_price" class="num" title="得物接口返回的原始报价（globalMinPrice），人民币结算">API ¥</th>
         <th data-k="payout_hk" class="num" title="香港报价 − max(5%,18) − 操作费(<350收44/≥350收62) − 1%转账">香港到手</th>
         <th data-k="cn_price" class="num" title="香港价 × 1.155（实测标定：对照得物买家端渠道最低价）">国内 ¥</th>
         <th data-k="payout_cn" class="num" title="国内价 × (1−5%−1%−2.5%) − 38 − 10">国内到手</th>
