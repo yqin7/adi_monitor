@@ -94,8 +94,13 @@
         <input id="ageDays" type="number" min="0" placeholder="不限"></div>
       <div class="f"><label>市场</label>
         <select id="market"><option value="CN">国内卖</option><option value="HK">香港卖</option></select></div>
+      <div class="f"><label>查 HKD 口径</label>
+        <select id="fetchHk"><option value="0">否（默认）</option><option value="1">是</option></select></div>
     </div>
-    <div class="hint">「只查报价超过 N 天」会跳过报价还新鲜的货号，大幅节省得物调用额度（美国站实测 2150 → 126）。</div>
+    <div class="hint">「只查报价超过 N 天」会跳过报价还新鲜的货号，大幅节省得物调用额度（美国站实测 2150 → 126）。<br>
+      「查 HKD 口径」额外按港币再查一次价格，用于复核人民币→买家实付价的换算系数。
+      实测港币值就是人民币值 × 汇率（差 0.03%），平时不必开 —— 开了价格调用翻倍，
+      全量一轮 6,520 → 9,780 次，耗时约 72 → 109 分钟。</div>
   </div>
 
   <div class="panel">
@@ -141,10 +146,10 @@ const SITES = [['us','\u{1F1FA}\u{1F1F8} 美国'], ['kr','\u{1F1F0}\u{1F1F7} 韩
 /* 每个任务吃哪些参数 —— 决定卡片提示文案和「没选国家就禁用」的逻辑。
    与 app/api/jobs.py 的 _make() 保持一致。 */
 const USES = {
-  'all':        {sites:true,  limit:true,  age:true},
+  'all':        {sites:true,  limit:true,  age:true,  hk:true},
   'adidas':     {sites:true,  limit:false, age:false},
-  'dewu':       {sites:false, limit:true,  age:true},
-  'dewu-retry': {sites:false, limit:true,  age:false},
+  'dewu':       {sites:false, limit:true,  age:true,  hk:true},
+  'dewu-retry': {sites:false, limit:true,  age:false, hk:true},
   'compute':    {sites:false, limit:false, age:false},
 };
 
@@ -185,7 +190,8 @@ function renderJobs() {
     const names = Object.fromEntries(SITES);
     const chosen = SITES.filter(x => picked.has(x[0])).map(x => names[x[0]]).join(' ');
     const uses = [u.limit ? '货号上限' : null,
-                  u.age ? '报价天数' : null].filter(Boolean);
+                  u.age ? '报价天数' : null,
+                  u.hk ? 'HKD 口径' : null].filter(Boolean);
     return `<div class="jc">
       <div class="t">${title}</div>
       <div class="d">${desc || '&nbsp;'}</div>
@@ -229,6 +235,7 @@ async function runJob(name) {
   if (u.limit && lim !== '') p.set('limit', lim);
   const age = $('#ageDays').value.trim();
   if (u.age && age !== '') p.set('max_quote_age_days', age);
+  if (u.hk && $('#fetchHk').value === '1') p.set('fetch_hk', 'true');
 
   const r = await fetch('/jobs/run/' + name + '?' + p.toString(), {method: 'POST'});
   if (!r.ok) { alert((await r.json()).detail || '启动失败'); return; }

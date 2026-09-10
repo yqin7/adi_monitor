@@ -89,6 +89,7 @@ def _chunk(seq: list, n: int):
 def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                    include_missed: bool = False, site: str | None = None,
                    max_quote_age_days: int | None = None,
+                   fetch_hk: bool = False,
                    region: str = "CN", currency: str = "CNY",
                    progress: Callable[[str], None] | None = None,
                    should_stop: Callable[[], bool] | None = None) -> dict[str, Any]:
@@ -103,6 +104,13 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     only_discounted    : 只查 Adidas 在打折的商品
     include_missed     : 是否重试历史未命中的货号
     max_quote_age_days : 只重查报价超过 N 天的货号（省得物调用额度）
+    fetch_hk           : 是否额外按 HKD 口径再查一次价格。
+
+    关于 fetch_hk：实测港币值 = 人民币值 × 汇率（202 个尺码，均值 1.1665
+    对真实汇率 1.1661，差 0.03%），并不带来新信息，前端可用汇率现算。
+    但它是接口真值、不依赖我们标定的系数，适合用来复核 1.155 那个换算。
+    代价是价格类调用翻倍：全量一轮 6,520 -> 9,780 次，耗时约 72 -> 109 分钟。
+    所以默认关闭，需要校验时再打开。
     """
     def report(msg: str) -> None:
         log.info(msg)
@@ -166,7 +174,8 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     skus_sorted = sorted(catalogs)
     total_ids = sum(len(catalogs[s].get("skus", [])) for s in skus_sorted)
     report(f"行情：{len(catalogs)} 个货号 / {total_ids} 个 skuId，"
-           f"每 {SAVE_EVERY} 个货号一组查询并写库")
+           f"每 {SAVE_EVERY} 个货号一组查询并写库"
+           + ("；同时查 HKD 口径（价格调用翻倍）" if fetch_hk else ""))
 
     # 重试统计：此前只有「彻底放弃」才写日志，中途退避成功是完全静默的 ——
     # 一组耗时异常时无从判断是不是撞了限流。这里按组累计，落库时一并报出来。
@@ -233,9 +242,10 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
             for r in ex.map(_price, chunks):
                 prices.update(r)
-        with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
-            for r in ex.map(_price_hk, chunks):
-                prices_hk.update(r)
+        if fetch_hk:
+            with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
+                for r in ex.map(_price_hk, chunks):
+                    prices_hk.update(r)
         with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
             for r in ex.map(_sales, chunks):
                 sales.update(r)
@@ -246,12 +256,14 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
             sizes = []
             for s in info.get("skus", []):
                 gid = s.get("globalSkuId")
-                hk = prices_hk.get(gid) or {}
-                sizes.append({"size": s.get("size"), "globalSkuId": gid,
-                              **prices.get(gid, {}), **sales.get(gid, {}),
-                              # HKD 口径的同一字段，单独存一份
-                              "hkMinPrice": hk.get("globalMinPrice"),
-                              "hkLeakPrice": hk.get("leakPrice")})
+                row = {"size": s.get("size"), "globalSkuId": gid,
+                       **prices.get(gid, {}), **sales.get(gid, {})}
+                if fetch_hk:
+                    # 只在真查了的时候才写，否则会用 None 覆盖掉上一轮存下的值
+                    hk = prices_hk.get(gid) or {}
+                    row["hkMinPrice"] = hk.get("globalMinPrice")
+                    row["hkLeakPrice"] = hk.get("leakPrice")
+                sizes.append(row)
             payload = {k: v for k, v in info.items()
                        if k not in ("skus", "_id", "fetched_at")}
             payload.update({

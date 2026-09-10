@@ -60,7 +60,7 @@ JOBS = {
 
 
 def _make(name: str, sites: list[str], limit: int | None, market: str,
-          max_quote_age_days: int | None = None):
+          max_quote_age_days: int | None = None, fetch_hk: bool = False):
     """把任务名映射成可在后台线程执行的函数。"""
     def work(job: job_runner.Job):
         from app.services import adidas_intl_service, us_sizes_service
@@ -130,7 +130,8 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
             scan_adidas()
         elif name == "dewu":
             out["dewu"] = refresh_quotes(limit=limit, progress=log, should_stop=stop,
-                                         max_quote_age_days=max_quote_age_days)
+                                         max_quote_age_days=max_quote_age_days,
+                                         fetch_hk=fetch_hk)
             out["compute"] = compute(market=market, progress=log)
         elif name == "dewu-retry":
             log("重查历史未命中货号（按 30 天冷却期）")
@@ -144,7 +145,8 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
             if not stop():
                 log("=== 得物报价（跨站去重、跳过已知未命中）===")
                 out["dewu"] = refresh_quotes(limit=limit, progress=log, should_stop=stop,
-                                             max_quote_age_days=max_quote_age_days)
+                                             max_quote_age_days=max_quote_age_days,
+                                             fetch_hk=fetch_hk)
                 out["compute"] = compute(market=market, progress=log)
         return out
 
@@ -163,12 +165,15 @@ def run(name: str,
         limit: int | None = Query(None, description="本轮最多处理多少货号"),
         market: str = Query("CN"),
         max_quote_age_days: int | None = Query(
-            None, description="只重查报价超过 N 天的货号，省得物调用额度；仅 dewu/all 生效")):
+            None, description="只重查报价超过 N 天的货号，省得物调用额度；仅 dewu/all 生效"),
+        fetch_hk: bool = Query(
+            False, description="额外查 HKD 口径价格用于复核换算系数；价格调用翻倍")):
     if name not in JOBS:
         raise HTTPException(404, f"未知任务 {name}")
     picked = [s.strip() for s in sites.split(",") if s.strip() in ALL_SITES] or ALL_SITES
     ok, msg = job_runner.start(name, JOBS[name],
-                               _make(name, picked, limit, market, max_quote_age_days))
+                               _make(name, picked, limit, market, max_quote_age_days,
+                                     fetch_hk))
     if not ok:
         raise HTTPException(409, msg)
     return {"started": True, "name": name, "label": JOBS[name], "sites": picked}
