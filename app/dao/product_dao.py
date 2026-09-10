@@ -29,6 +29,9 @@ class ProductDAO:
         self.collection.create_index("category")
         self.collection.create_index("updated_at")
         self.collection.create_index("created_at")
+        # /arbitrage/freshness 的数据指纹要按站点取最新尺码时间，
+        # 没索引就是内存阻塞排序，量大时会撞 32MB 限制让 /raw 直接 500
+        self.collection.create_index([("site", 1), ("sizes_updated_at", -1)])
         try:
             self.history.drop_index("sku_1_snapshot_id_1")
         except Exception:

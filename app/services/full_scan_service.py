@@ -591,13 +591,17 @@ def run_full_scan(
     # 英国站那次「八个分类全超时、拿到 0 个 SKU 却平静打印完成」的模式
     # 在这里同样成立，而且影响 1.4 万条商品。
     conn = MongoConnection.from_environment(required=True)
-    try:
-        prev_us = conn.db["products"].count_documents({"site": "us"})
-    finally:
-        pass
+    # 基数必须和本轮抓取范围一致：只抓一个分类时拿它跟全站比，比值必然远低于
+    # 门槛（实测最大的 men-clothing 也只占全站 31%），会把每一次单分类扫描
+    # 都误判成抓取异常。app/api/scan.py 的按分类扫描走的正是这条路径。
+    scope = {"site": "us"}
+    if category:
+        scope["category"] = category
+    prev_us = conn.db["products"].count_documents(scope)
+    scope_label = f"美国站 {category}" if category else "美国站"
     ratio = (len(deduped) / prev_us) if prev_us else 1.0
     if prev_us and ratio < HEALTH_MIN_RATIO:
-        msg = (f"【抓取异常】美国站本轮 {len(deduped)} 个 SKU，库里已有 {prev_us} 个，"
+        msg = (f"【抓取异常】{scope_label}本轮 {len(deduped)} 个 SKU，库里已有 {prev_us} 个，"
                f"仅 {ratio:.0%}（门槛 {HEALTH_MIN_RATIO:.0%}）。已放弃写库，保留原有数据。")
         _report("health", msg)
         conn.close()

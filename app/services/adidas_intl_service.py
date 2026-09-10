@@ -178,13 +178,15 @@ def run_site_scan(site: str, category: str | None = None,
     # 而前端新鲜度显示的还是上次成功抓取的时间，看着一切正常。
     from app.dao.mongo_client import MongoConnection as _MC
     _conn = _MC.from_environment(required=True)
-    try:
-        prev = _conn.db["products"].count_documents({"site": site})
-    finally:
-        _conn.close()
+    # 与美国站同理：只抓一个分类时，基数也要限定到该分类，否则必然误判
+    _scope = {"site": site}
+    if category:
+        _scope["category"] = category
+    prev = _conn.db["products"].count_documents(_scope)
     ratio = (len(deduped) / prev) if prev else 1.0
     if prev and ratio < HEALTH_MIN_RATIO:
-        msg = (f"[{label_cn}] 【抓取异常】本轮 {len(deduped)} 个 SKU，"
+        msg = (f"[{label_cn}{'/' + category if category else ''}] 【抓取异常】"
+               f"本轮 {len(deduped)} 个 SKU，"
                f"库里已有 {prev} 个，仅 {ratio:.0%}（门槛 {HEALTH_MIN_RATIO:.0%}）。"
                f"已放弃写库，保留原有数据。")
         report(msg)

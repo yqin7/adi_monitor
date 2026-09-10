@@ -27,8 +27,6 @@ _TTL = 900          # 15 分钟：汇率日内波动对利润的影响远小于�
 
 
 def _fetch() -> dict[str, float] | None:
-    import requests
-
     for name, url, pick in (
         ("open.er-api", "https://open.er-api.com/v6/latest/USD",
          lambda d: (d["rates"], d.get("time_last_update_utc", ""))),
@@ -37,6 +35,9 @@ def _fetch() -> dict[str, float] | None:
          lambda d: (d["rates"], d.get("date", ""))),
     ):
         try:
+            # import 放进 try：缺 requests 时应退化到兜底汇率，
+            # 而不是让 compute()/dewu 任务一上来就 ModuleNotFoundError
+            import requests
             d = requests.get(url, timeout=12).json()
             rates, ts = pick(d)
             if "CNY" not in rates:

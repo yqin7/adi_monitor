@@ -193,6 +193,11 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                     retry_stat["slept"] += delay
                     time.sleep(delay)
                     continue
+                # 参数/签名不匹配这类错误必须炸出来。曾经一律吞掉返回 {}，
+                # 结果会是「请求量涨了 50%、hkMinPrice 全空、界面只显示 —」
+                # 而日志里只有一行 warning，很难联想到是调用方式变了。
+                if isinstance(e, (TypeError, TabError, AttributeError)):
+                    raise
                 retry_stat["gave_up"] += 1
                 log.warning("%s失败: %s", tag, msg[:80])
                 return {}
@@ -346,6 +351,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
             continue
         cur = d.get("currency") or SITE_CURRENCY.get(d.get("site", "us"), "USD")
         d["_usd"] = to_usd(local, cur, rates)
+        d["_site"] = d.get("site", "us")
         # 同一货号多个站都有时，留采购成本最低的那个 —— 比价本来就该挑最便宜的进货地
         cur_best = products.get(d["sku"])
         if cur_best is None or d["_usd"] < cur_best["_usd"]:
@@ -362,13 +368,22 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
             continue
         usd = p["_usd"]
 
+        # 返现门户与销售税是美国站特有的（Rakuten/RetailMeNot、州销售税），
+        # 套在日韩英加的采购上会让那些行的利润系统性偏高。
+        # 按站点取一份配置：非美国站清零这两项，其余照旧。
+        site_cfg = cfg
+        if p["_site"] != "us":
+            site_cfg = {**cfg, "purchase": {**cfg["purchase"],
+                                            "cashback_portal": 0.0,
+                                            "sales_tax": 0.0}}
+
         for size in quote.get("sizes", []):
             price = size.get("globalMinPrice")
             if not price:
                 continue
             considered += 1
             sales = size.get("globalSoldNum30")
-            res = evaluate(usd, price, cfg, market=market,
+            res = evaluate(usd, price, site_cfg, market=market,
                            promo_rate=p.get("promo_rate"), promo_code=p.get("promo_code"))
             if apply_filter and not passes_filter(res, sales, cfg):
                 continue
@@ -379,7 +394,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
                 "category": p.get("category"),
                 "url": p.get("url"),
                 "is_sold_out": p.get("is_sold_out", False),
-                "site": p.get("site"),
+                "site": p["_site"],
                 "local_price": p.get("sale_price") or p.get("orig_price"),
                 "local_currency": p.get("currency"),
                 "adidas_list_usd": p.get("orig_price"),

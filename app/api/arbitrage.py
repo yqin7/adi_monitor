@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, BackgroundTasks, Query, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 
 from app.dao.arbitrage_dao import ArbitrageDAO
 from app.dao.mongo_client import MongoConnection
@@ -43,6 +43,14 @@ _RAW_CACHE: dict[str, tuple[tuple, bytes]] = {}
 _RAW_CACHE_MAX = 8          # 每份约 1.6MB；key 含用户可控的 limit/min_sales，
                             # 不设上限的话反复变参数能把上百 MB 钉在进程里
 _FRESH_CACHE: dict[str, tuple[float, dict]] = {}   # site -> (写入时刻, 结果)
+# 两个缓存的 key 都含 URL 参数，站点先过白名单，避免任意字符串把内存撑爆
+SITES = ("us", "kr", "jp", "gb", "ca")
+
+
+def _check_site(site: str) -> str:
+    if site not in SITES:
+        raise HTTPException(400, f"未知站点 {site}，可选 {'/'.join(SITES)}")
+    return site
 
 
 def _data_stamp(db, site: str) -> tuple:
@@ -108,6 +116,7 @@ def freshness(site: str = Query("us", description="us | kr | jp | gb | ca")):
 
     # 这个接口只是回答「数据什么时候扫的」，不需要秒级精确；
     # 而它要打十来个 Atlas 往返，每个往返都是几百毫秒。60 秒 TTL 足够。
+    _check_site(site)
     cached = _FRESH_CACHE.get(site)
     if cached and _time.time() - cached[0] < 60:
         return {**cached[1], "cached": True}
@@ -150,6 +159,8 @@ def freshness(site: str = Query("us", description="us | kr | jp | gb | ca")):
     out = {"site": site, "server_time": _iso(datetime.utcnow()),
            "adidas_price": price, "adidas_sizes": sizes, "dewu_quotes": quotes,
            "coverage": {"site_skus": site_total, "with_quote": quoted}}
+    if len(_FRESH_CACHE) >= len(SITES) * 2:
+        _FRESH_CACHE.pop(next(iter(_FRESH_CACHE)))
     _FRESH_CACHE[site] = (_time.time(), out)
     return {**out, "cached": False}
 
@@ -254,6 +265,7 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
     db = MongoConnection.from_environment(required=True).db
     dao = ArbitrageDAO(db)
 
+    _check_site(site)
     stamp = _data_stamp(db, site)
     key = f"{site}:{min_sales}:{limit}"
     if not no_cache:

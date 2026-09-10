@@ -1,4 +1,5 @@
 curl_cffi>=0.5.9
+requests>=2.31.0        # app/core/fx.py 取实时汇率；dewu_client 也依赖
 pymongo>=4.5.0
 python-dotenv>=1.0.0
 playwright>=1.40.0
@@ -9,4 +10,6 @@ pydantic>=2.5.0
 apscheduler>=3.10,<4
 # 得物海外(POIZON)查询客户端，源码见 yqin7/dewu-monitor（私有仓库）。
 # 只有得物相关任务需要它；缺失时服务仍能启动，比价页读库正常。
-dewu-client @ git+https://github.com/yqin7/dewu-monitor.git
+# 钉住 commit：这个包的函数签名变化会让 batch_price 调用直接失败，
+# 而调用点包在重试里，不钉版本的话升级后很难定位。
+dewu-client @ git+https://github.com/yqin7/dewu-monitor.git@3bc65a6

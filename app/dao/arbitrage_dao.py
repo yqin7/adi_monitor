@@ -9,7 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Iterable
 
+import logging
+
 from pymongo import ASCENDING, DESCENDING, UpdateOne
+
+log = logging.getLogger(__name__)
 
 
 class ArbitrageDAO:
@@ -160,8 +164,12 @@ class ArbitrageDAO:
         """
         now = datetime.utcnow()
         if not rows:
-            removed = self.arb.delete_many({}).deleted_count
-            return {"written": 0, "removed": removed}
+            # 一条都没算出来，更可能是上游出了问题（汇率兜底导致成本虚高、
+            # sites 传错、门槛配错），而不是「今天真的没有机会」。
+            # 这时清空整表会连上一轮的好结果一起抹掉，宁可留着不动。
+            kept = self.arb.count_documents({})
+            log.warning("compute 结果为空，保留上一轮 %s 条不动 —— 请检查上游是否异常", kept)
+            return {"written": 0, "removed": 0, "kept": kept, "empty_result": True}
         ops = [UpdateOne({"sku": r["sku"], "size": r["size"]},
                          {"$set": {**r, "computed_at": now}}, upsert=True)
                for r in rows]
