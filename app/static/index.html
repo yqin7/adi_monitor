@@ -145,7 +145,13 @@
   .sheet th,.sheet td{padding:6px 9px;border-bottom:1px solid var(--line);
                       text-align:left;white-space:nowrap}
   .sheet th{color:var(--muted);font-weight:600}
-  .sheet td.num{text-align:right;font-variant-numeric:tabular-nums}
+  /* 表头必须跟着单元格一起对齐 —— 只给 td 设 right、th 留 left，
+     数字靠右、标题靠左，两边就分家了。 */
+  .sheet th.num,.sheet td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .sheet th.mid,.sheet td.mid{text-align:center}
+  /* 库存列固定窄宽，五国并排时不会被拉开 */
+  .sheet th.mid,.sheet td.mid{width:52px}
+  .sheet td.gap,.sheet th.gap{width:100%}    /* 吃掉剩余宽度，其余列各归各位 */
   .sheet .close{position:absolute;top:0;right:0}
   .sheetwrap{position:relative}
   .stk2{font-size:11.5px;padding:1px 6px;border-radius:5px}
@@ -718,15 +724,16 @@ async function searchSku() {
       + '<td class="num">' + (s.sale_price != null ? c + s.sale_price : '—') + '</td>'
       + '<td>' + (s.promo_code ? esc(s.promo_code) + ' ' + off : '—') + '</td>'
       + '<td class="num">' + s.size_count + '</td>'
-      + '<td>' + (s.is_sold_out ? '<span class="stk2 n">售罄</span>' : '') + '</td>'
+      + '<td>' + (s.is_sold_out ? '<span class="stk2 n">售罄</span>' : '—') + '</td>'
       + '<td>' + (s.scraped_at ? ago(s.scraped_at) : '—') + '</td>'
-      + '<td>' + (s.url ? '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">打开</a>' : '') + '</td>'
+      + '<td class="gap">' + (s.url ? '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">打开</a>' : '') + '</td>'
       + '</tr>';
   }).join('');
 
   const siteTbl = '<h4>各国售价</h4><table><thead><tr>'
-    + '<th>站点</th><th>原价</th><th>折后</th><th>促销码</th><th>尺码数</th>'
-    + '<th>状态</th><th>抓取于</th><th></th></tr></thead><tbody>'
+    + '<th>站点</th><th class="num">原价</th><th class="num">折后</th>'
+    + '<th>促销码</th><th class="num">尺码数</th><th>状态</th>'
+    + '<th>抓取于</th><th class="gap"></th></tr></thead><tbody>'
     + (rows || '<tr><td colspan="8">各国官网都没有这个货号</td></tr>')
     + '</tbody></table>';
 
@@ -734,17 +741,18 @@ async function searchSku() {
   if (d.sizes && d.sizes.length) {
     const cols = d.sites.map(s => s.site);
     sizeTbl = '<h4>尺码 · 得物报价与各国库存</h4><table><thead><tr>'
-      + '<th>尺码</th><th>得物 ¥</th><th>月销</th><th>环比</th>'
-      + cols.map(s => '<th>' + esc(SITE_CN[s] || s) + '</th>').join('')
-      + '</tr></thead><tbody>'
+      + '<th>尺码</th><th class="num">得物 ¥</th><th class="num">月销</th>'
+      + '<th class="num">环比</th>'
+      + cols.map(s => '<th class="mid">' + esc(SITE_CN[s] || s) + '</th>').join('')
+      + '<th class="gap"></th></tr></thead><tbody>'
       + d.sizes.map(r => '<tr>'
         + '<td>' + esc(r.size) + '</td>'
         + '<td class="num">' + (r.dewu_price != null ? r.dewu_price : '—') + '</td>'
         + '<td class="num">' + (r.monthly_sales || 0) + '</td>'
         + '<td class="num">' + (r.sales_mom == null ? '—'
             : (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom * 100).toFixed(0) + '%') + '</td>'
-        + cols.map(s => '<td>' + stkTag((r.in_stock || {})[s]) + '</td>').join('')
-        + '</tr>').join('')
+        + cols.map(s => '<td class="mid">' + stkTag((r.in_stock || {})[s]) + '</td>').join('')
+        + '<td class="gap"></td></tr>').join('')
       + '</tbody></table>'
       + '<div class="meta" style="margin-top:8px">'
       + '得物价为香港报价（人民币结算）；库存「?」表示该站没有尺码数据或写法暂不支持</div>';
