@@ -148,12 +148,13 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
 
     # ── 阶段2：分组攒批查行情，边查边落库 ──────────────────────────────
     # 每 SAVE_EVERY 个货号为一组：组内 skuId 攒成 20 个一批查价格/销量，
-    # 查完立即写 dewu_quotes。这样中途看得到增长，进程中断也不会全废。
+    # 查完整组一次性写 dewu_quotes。分组的意义是「进程中断不会全废」——
+    # 用户掉线那次就靠它保住了 4,770 个货号的结果。
     SAVE_EVERY = 200
     skus_sorted = sorted(catalogs)
     total_ids = sum(len(catalogs[s].get("skus", [])) for s in skus_sorted)
     report(f"行情：{len(catalogs)} 个货号 / {total_ids} 个 skuId，"
-           f"每 {SAVE_EVERY} 个货号一组落库")
+           f"每 {SAVE_EVERY} 个货号一组查询并写库")
 
     # 重试统计：此前只有「彻底放弃」才写日志，中途退避成功是完全静默的 ——
     # 一组耗时异常时无从判断是不是撞了限流。这里按组累计，落库时一并报出来。
@@ -210,6 +211,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
             for r in ex.map(_sales, chunks):
                 sales.update(r)
 
+        batch: list[tuple[str, dict]] = []
         for sku in group:
             info = catalogs[sku]
             sizes = []
@@ -224,15 +226,19 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                 "country": region, "sizes": sizes,
                 "totalSoldNum30": sum(x.get("globalSoldNum30") or 0 for x in sizes),
             })
-            dao.save_quote(sku, payload)
+            batch.append((sku, payload))
             dewu_size_pairs.extend((z.get("size"), sku) for z in sizes if z.get("size"))
-            saved += 1
+        # 整组一次写完。逐条 update_one 对 Atlas 是每条一个往返，200 条要 52 秒。
+        dao.save_quotes(batch)
+        saved += len(batch)
         extra = ""
         if retry_stat["rate_limited"] or retry_stat["gave_up"]:
             extra = (f"（限流重试 {retry_stat['rate_limited']} 次，"
                      f"累计退避 {retry_stat['slept']:.0f}s，放弃 {retry_stat['gave_up']} 次）")
             retry_stat.update(rate_limited=0, slept=0.0, gave_up=0)
-        report(f"  已落库 {saved}/{len(catalogs)} 个货号 "
+        # 说明「已完成」而不是「已落库」：这一组的耗时绝大部分花在查得物接口
+        # （每 20 个 skuId 一批、价格与销量各一次），写库只占很小一部分。
+        report(f"  已完成 {saved}/{len(catalogs)} 个货号 "
                f"[本组 {time.time() - t_group:.0f}s]{extra}")
 
     report(f"报价补全完成：命中 {saved}，未命中 {miss}，失败 {errors}")
