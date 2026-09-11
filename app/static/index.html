@@ -106,6 +106,9 @@
        font-size:11px;background:rgba(99,132,255,.16);color:var(--muted)}
   .stk{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px}
   .stk.unk{color:var(--muted);opacity:.55}
+  /* 香港列默认不显示：只有开了「查 HKD 口径」跑过得物任务才有值，
+     平时整列都是 — ，白占宽度 */
+  body.hide-hk .col-hk{display:none}
   .stk.ok{background:rgba(16,160,80,.18);color:var(--pos)}
   .stk.no{background:rgba(200,50,40,.16);color:var(--neg)}
   .sku{font-family:ui-monospace,Menlo,monospace;font-size:12px}
@@ -231,6 +234,8 @@
         <select id="quoteAge"><option value="0">不限</option><option value="1">1 天内</option>
           <option value="3">3 天内</option><option value="7">7 天内</option>
           <option value="30">30 天内</option></select></div>
+      <div class="f"><label class="tip" data-tip="得物接口 currency=HKD 的报价。只有在任务页把「查 HKD 口径」设为「是」并跑过得物任务后才有值">香港列</label>
+        <select id="showHk"><option value="0">隐藏</option><option value="1">显示</option></select></div>
       <div class="f"><label class="tip" data-tip="仅韩国站能拿到尺码库存；美国站无此数据，勾选后会全部过滤掉">只显示有货</label>
         <select id="stockOnly"><option value="0">全部</option><option value="1">仅有货</option></select></div>
       <div class="f"><label>&nbsp;</label><button class="ghost" id="reset">重置</button></div>
@@ -258,7 +263,7 @@
         <th data-k="net_usd" class="num" id="thNet" title="货款实付，不含运费">货款 $</th>
         <th data-k="cost_cny" class="num" id="thCost" title="货款折算 + 运费">成本 ¥</th>
         <th data-k="hk_price" class="num" title="得物接口 globalMinPrice（currency=CNY）。名字里的 global 即全球最低报价——实测 countryCode 传 CN 或 HK 返回完全相同，只有 currency 会换算。乘以 1.155 得到右侧「国内 ¥」，系数由 5 个货号 49 个尺码对照买家端实付价标定（1.150~1.157）">全球</th>
-        <th data-k="hk_global" class="num" title="同一个 globalMinPrice 按 currency=HKD 查回的接口值。抓取默认不查这个口径（会让价格调用翻倍），未查到就显示 — ；要取值请在任务页把「查 HKD 口径」设为「是」再跑得物任务">香港</th>
+        <th data-k="hk_global" class="num col-hk" title="同一个 globalMinPrice 按 currency=HKD 查回的接口值。抓取默认不查这个口径（会让价格调用翻倍），未查到就显示 — ；要取值请在任务页把「查 HKD 口径」设为「是」再跑得物任务">香港</th>
         <th data-k="cn_price" class="num" title="CN × 1.155，即买家端实付价的估计值">国内 ¥</th>
         <th data-k="payout_cn" class="num" title="国内价 × (1−5%−1%−2.5%) − 38 − 10">国内到手</th>
         <th data-k="profit_cn" class="num">国内净利</th>
@@ -307,6 +312,13 @@ try { OVERRIDES = JSON.parse(localStorage.getItem('dewu_overrides') || '{}'); } 
 const saveOv = () => { try { localStorage.setItem('dewu_overrides', JSON.stringify(OVERRIDES)); } catch (e) {} };
 
 const num = id => Number($('#' + id).value) || 0;
+
+/* 香港列显示开关。默认隐藏 —— 抓取默认不查 HKD 口径，整列都是 — 。 */
+function applyHkCol() {
+  const show = $('#showHk').value === '1';
+  document.body.classList.toggle('hide-hk', !show);
+  try { localStorage.setItem('show_hk', show ? '1' : '0'); } catch (e) {}
+}
 
 /* ── 数据新鲜度 ─────────────────────────────────────────────────────
    后端给的时间都是带 Z 的 UTC 串，Date.parse 后按本地时区展示。 */
@@ -502,7 +514,7 @@ function render() {
       <td class="num">${fmt(r.net_usd, 2)}</td>
       <td class="num">${fmt(r.cost_cny)}</td>
       <td class="num">${fmt(r.hk_price)}</td>
-      <td class="num">${r.hk_global != null ? fmt(r.hk_global) : '<span class="stk unk">—</span>'}</td>
+      <td class="num col-hk">${r.hk_global != null ? fmt(r.hk_global) : '<span class="stk unk">—</span>'}</td>
       <td class="num">${fmt(r.cn_price)}</td>
       <td class="num">${fmt(r.payout_cn)}</td>
       <td class="num ${r.profit_cn > 0 ? 'pos' : 'neg'}">${r.profit_cn > 0 ? '+' : ''}${fmt(r.profit_cn)}</td>
@@ -647,6 +659,7 @@ $('#reset').onclick = () => {
   ['rakuten','rmn','bank','ship','tax'].forEach((k, i) => $('#' + k).value = ['',0,3,0,0][i]);
   $('#minSales').value = 20; $('#minProfit').value = ''; $('#minRoi').value = '';
   $('#stockOnly').value = '0'; $('#posCn').value = '0';
+  $('#showHk').value = '0'; applyHkCol();
   $('#quoteAge').value = '0';
   $('#catFilter').value = '';
   loadFx().then(render);
@@ -658,6 +671,9 @@ document.querySelectorAll('input:not(#skuSearch)').forEach(el =>
 $('#clearOv').onclick = () => { OVERRIDES = {}; saveOv(); render(); };
 $('#sortBy').onchange = () => { sortBy = $('#sortBy').value; page = 0; render(); };
 $('#stockOnly').onchange = () => { page = 0; render(); };
+$('#showHk').onchange = applyHkCol;
+try { $('#showHk').value = localStorage.getItem('show_hk') === '1' ? '1' : '0'; } catch (e) {}
+applyHkCol();
 $('#quoteAge').onchange = () => { page = 0; render(); };
 $('#catFilter').onchange = e => {
   e.target.classList.toggle('active', !!e.target.value);
