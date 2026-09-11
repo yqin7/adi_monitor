@@ -19,3 +19,7 @@ __pycache__/
 .venv/
 # Claude Code local worktrees/settings
 .claude/
+
+# 构建产物
+*.egg-info/
+/tmp/

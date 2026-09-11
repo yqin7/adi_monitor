@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QY数聚</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --text:#1a1d21; --muted:#6b7280;
+    --line:#e5e7eb; --pos:#0f7b3e; --neg:#b42318; --accent:#111827; --hl:#fff8e1;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1115; --card:#171a20; --text:#e8eaed; --muted:#9aa1ab;
+           --line:#272b33; --pos:#4ade80; --neg:#f87171; --accent:#e8eaed; --hl:#2a2415; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+  .wrap{max-width:100%;margin:0 auto;padding:18px 14px 60px}
+  h1{font-size:20px;margin:0 0 3px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:10px;
+         padding:14px 16px;margin-bottom:14px}
+  .panel h2{font-size:13px;margin:0 0 11px;color:var(--muted);font-weight:600;
+            letter-spacing:.02em;text-transform:uppercase}
+  .grid{display:flex;flex-wrap:wrap;gap:13px;align-items:end}
+  .f{display:flex;flex-direction:column;gap:4px}
+  .f label{font-size:12px;color:var(--muted);white-space:nowrap}
+  .f label.tip{cursor:help;position:relative;border-bottom:1px dotted var(--muted)}
+  .f label.tip::after{
+    content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 7px);
+    background:var(--accent);color:var(--bg);padding:5px 9px;border-radius:6px;
+    font-size:12px;white-space:nowrap;opacity:0;visibility:hidden;
+    transition:opacity .12s;pointer-events:none;z-index:5;
+    box-shadow:0 2px 8px rgba(0,0,0,.18)}
+  .f label.tip::before{
+    content:"";position:absolute;left:11px;bottom:calc(100% + 2px);
+    border:5px solid transparent;border-top-color:var(--accent);
+    opacity:0;visibility:hidden;transition:opacity .12s;z-index:5}
+  .f label.tip:hover::after,.f label.tip:hover::before{opacity:1;visibility:visible}
+  /* ── 数据新鲜度 ────────────────────────────────────────────── */
+  .fresh{display:flex;flex-wrap:wrap;gap:7px 16px;align-items:center;
+         background:var(--card);border:1px solid var(--line);border-radius:10px;
+         padding:9px 13px;margin-bottom:12px;font-size:12.5px;color:var(--muted)}
+  .fresh b{color:var(--text);font-weight:600}
+  .fresh .sep{opacity:.35}
+  .fresh .warn{color:#d29922}
+  .fresh .bad{color:#f85149}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;
+       vertical-align:middle;position:relative;cursor:help;margin-right:6px;flex:none}
+  .dot.f0{background:#3fb950}   /* 24 小时内 */
+  .dot.f1{background:#d29922}   /* 1-7 天 */
+  .dot.f2{background:#f85149}   /* 超过 7 天 */
+  .dot.f3{background:#6e7681}   /* 时间未知 */
+  .dot::after{
+    content:attr(data-tip);position:absolute;left:-4px;bottom:calc(100% + 8px);
+    background:var(--accent);color:var(--bg);padding:7px 10px;border-radius:6px;
+    font-size:11.5px;line-height:1.6;white-space:pre;text-align:left;
+    opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none;z-index:9;
+    box-shadow:0 3px 10px rgba(0,0,0,.25)}
+  .dot::before{
+    content:"";position:absolute;left:1px;bottom:calc(100% + 3px);
+    border:5px solid transparent;border-top-color:var(--accent);
+    opacity:0;visibility:hidden;transition:opacity .12s;z-index:9}
+  .dot:hover::after,.dot:hover::before{opacity:1;visibility:visible}
+  input,select{background:var(--bg);color:var(--text);border:1px solid var(--line);
+               border-radius:7px;padding:6px 8px;font-size:13px;width:96px}
+  #ship,#tax,#rakuten,#rmn,#bank{width:74px}
+  #fx{width:104px}
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  button{background:var(--accent);color:var(--bg);border:0;border-radius:7px;
+         padding:7px 18px;font-size:13px;font-weight:600;cursor:pointer}
+  button:hover{opacity:.88}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+         gap:10px;margin-bottom:14px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 13px}
+  .stat .k{color:var(--muted);font-size:12px}
+  .stat .v{font-size:19px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums}
+  .tablewrap{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow-x:auto}
+  table{width:100%;border-collapse:collapse;min-width:0;table-layout:auto;font-size:12.5px}
+  th,td{padding:7px 5px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{padding-left:11px}
+  th:last-child,td:last-child{padding-right:11px}
+  th{font-size:12px;color:var(--muted);font-weight:600;position:sticky;top:0;
+     background:var(--card);cursor:pointer;user-select:none;z-index:1}
+  th.on{color:var(--text)}
+  th.nosort{cursor:default}
+  select.hsel{width:auto;min-width:56px;padding:2px 18px 2px 5px;font-size:12px;
+              font-weight:600;color:var(--muted);background:transparent;border:0;
+              cursor:pointer;appearance:none;
+              background-image:linear-gradient(45deg,transparent 50%,currentColor 50%),
+                               linear-gradient(135deg,currentColor 50%,transparent 50%);
+              background-position:calc(100% - 9px) 55%,calc(100% - 5px) 55%;
+              background-size:4px 4px,4px 4px;background-repeat:no-repeat}
+  select.hsel:hover{color:var(--text)}
+  select.hsel.active{color:var(--text);background-color:rgba(99,132,255,.16);border-radius:4px}
+  select.hsel option{background:var(--card);color:var(--text);font-weight:400}
+  th.num,td.num{text-align:right}
+  td.num{font-variant-numeric:tabular-nums}
+  tbody tr:hover{background:rgba(127,127,127,.06)}
+  .pos{color:var(--pos);font-weight:600}
+  .neg{color:var(--neg)}
+  .name{max-width:150px;overflow:hidden;text-overflow:ellipsis}
+  .cat{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:4px;
+       font-size:11px;background:rgba(99,132,255,.16);color:var(--muted)}
+  .stk{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px}
+  .stk.unk{color:var(--muted);opacity:.55}
+  /* 香港列默认不显示：只有开了「查 HKD 口径」跑过得物任务才有值，
+     平时整列都是 — ，白占宽度 */
+  body.hide-hk .col-hk{display:none}
+  .stk.ok{background:rgba(16,160,80,.18);color:var(--pos)}
+  .stk.no{background:rgba(200,50,40,.16);color:var(--neg)}
+  .sku{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .tag{display:inline-block;padding:1px 5px;border-radius:4px;font-size:11px;
+       background:rgba(127,127,127,.15);color:var(--muted)}
+  th.tight,td.tight{width:1%;white-space:nowrap}
+  .code{background:var(--hl);color:var(--text);padding:1px 4px;border-radius:4px;
+        font-size:10.5px;font-family:ui-monospace,Menlo,monospace;white-space:nowrap}
+  input.ov{width:44px;padding:2px 4px;font-size:11.5px;text-align:right;background:transparent;
+           border:1px dashed var(--line)}
+  input.ov:focus{background:var(--bg);border-style:solid}
+  input.ov.set{background:var(--hl);border-style:solid;font-weight:600}
+  .empty{padding:44px;text-align:center;color:var(--muted)}
+  /* 任务面板已独立到 /ui/tasks，这里只保留一个状态指示灯 */
+  .topnav{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .topnav a{color:var(--muted);text-decoration:none;font-size:13px;
+            border:1px solid var(--line);border-radius:7px;padding:5px 11px}
+  .topnav a:hover{color:var(--text)}
+  .jobbadge{font-size:12.5px;color:var(--muted);border:1px solid var(--line);
+            border-radius:7px;padding:5px 10px}
+  .jobbadge.run{color:var(--pos);border-color:var(--pos)}
+  .jobbadge.err{color:var(--neg);border-color:var(--neg)}
+
+  /* ── 货号搜索 ─────────────────────────────────────────────── */
+  #skuSearch{width:190px}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:50;
+         display:flex;align-items:flex-start;justify-content:center;padding:38px 14px;
+         overflow:auto}
+  .modal[hidden]{display:none!important}
+  .sheet{background:var(--card);border:1px solid var(--line);border-radius:12px;
+         width:min(1000px,100%);padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,.35)}
+  .sheet h3{margin:0 0 3px;font-size:17px}
+  .sheet .meta{color:var(--muted);font-size:12.5px;margin-bottom:14px}
+  .sheet h4{font-size:12px;color:var(--muted);margin:16px 0 8px;font-weight:600;
+            text-transform:uppercase;letter-spacing:.02em}
+  .sheet table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .sheet th,.sheet td{padding:6px 9px;border-bottom:1px solid var(--line);
+                      text-align:left;white-space:nowrap}
+  .sheet th{color:var(--muted);font-weight:600}
+  /* 表头必须跟着单元格一起对齐 —— 只给 td 设 right、th 留 left，
+     数字靠右、标题靠左，两边就分家了。 */
+  .sheet th.num,.sheet td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .sheet th.mid,.sheet td.mid{text-align:center}
+  /* 库存列固定窄宽，五国并排时不会被拉开 */
+  .sheet th.mid,.sheet td.mid{width:52px}
+  .sheet td.gap,.sheet th.gap{width:100%}    /* 吃掉剩余宽度，其余列各归各位 */
+  .sheet .close{position:absolute;top:0;right:0}
+  .sheetwrap{position:relative}
+  .stk2{font-size:11.5px;padding:1px 6px;border-radius:5px}
+  .stk2.y{background:rgba(63,185,80,.16);color:var(--pos)}
+  .stk2.n{background:rgba(248,81,73,.14);color:var(--neg)}
+  .stk2.u{background:rgba(110,118,129,.18);color:var(--muted)}
+  .mzero{padding:26px;text-align:center;color:var(--muted)}
+  .pager{display:flex;gap:8px;align-items:center;justify-content:center;
+         margin:10px 0;color:var(--muted);font-size:13px;flex-wrap:wrap}
+  .pager button{padding:5px 12px;font-size:12.5px}
+  .pager button:disabled{opacity:.35;cursor:not-allowed}
+  .pager select{width:auto;padding:5px 8px;font-size:12.5px}
+  .fx{font-size:12px;color:var(--muted);margin-left:auto;text-align:right}
+  .tabs{display:flex;gap:6px;margin-bottom:14px}
+  .tabs button{background:transparent;color:var(--muted);border:1px solid var(--line);
+               padding:8px 22px;font-size:14px}
+  .tabs button.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+  /* 加载中的 tab：底部走一条进度条，比禁用按钮友好 */
+  .tabs button.loading{position:relative;overflow:hidden}
+  .tabs button.loading::after{
+    content:"";position:absolute;left:0;bottom:0;height:2px;width:40%;
+    background:currentColor;opacity:.7;animation:tabload 1s linear infinite}
+  @keyframes tabload{0%{transform:translateX(-100%)}100%{transform:translateX(350%)}}
+  a{color:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>QY数聚</h1>
+
+  <div class="topnav">
+    <input id="skuSearch" placeholder="搜货号，如 JE5682（回车）" autocomplete="off">
+    <button class="ghost" id="skuGo">搜索</button>
+    <a href="/ui/tasks">数据任务 →</a>
+    <span class="jobbadge" id="jobBadge" hidden></span>
+  </div>
+
+  <div class="tabs">
+    <button class="active" data-site="us">🇺🇸 美国</button>
+    <button data-site="kr">🇰🇷 韩国</button>
+    <button data-site="jp">🇯🇵 日本</button>
+    <button data-site="gb">🇬🇧 英国</button>
+    <button data-site="ca">🇨🇦 加拿大</button>
+  </div>
+
+  <div class="panel">
+    <h2>成本参数</h2>
+    <div class="grid">
+      <div class="f"><label class="tip" data-tip="留空则各商品用自带促销码折扣">全局折扣</label>
+        <input id="promo" type="number" step="0.01" min="0" max="1" placeholder="如 0.7"></div>
+      <div class="f"><label>Rakuten 返利 %</label><input id="rakuten" type="number" step="0.1" placeholder="0"></div>
+      <div class="f" id="rmnBox"><label class="tip" data-tip="单笔返利上限 $50">RetailMeNot 返利 %</label>
+        <input id="rmn" type="number" step="0.1" value="0"></div>
+      <div class="f"><label>银行卡返利 %</label><input id="bank" type="number" step="0.1" value="3"></div>
+      <div class="f"><label>运费 ¥/件</label><input id="ship" type="number" step="0.1" value="0"></div>
+      <div class="f"><label>销售税 %</label><input id="tax" type="number" step="0.1" value="0"></div>
+      <div class="f"><label id="fxLabel">汇率 USD→CNY</label><input id="fx" type="number" step="0.000001"></div>
+      <div class="f"><label>&nbsp;</label><button id="apply">确认重算</button></div>
+      <div class="fx" id="fxInfo">汇率加载中…</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>筛选与排序</h2>
+    <div class="grid">
+      <div class="f"><label>排序</label>
+        <select id="sortBy"><option value="profit_cn">国内净利</option>
+          <option value="roi">利润率 ROI</option>
+          <option value="monthly_sales">月销</option>
+          <option value="dewu_age_h">得物报价最旧优先</option></select></div>
+      <div class="f"><label>最低月销</label><input id="minSales" type="number" value="20"></div>
+      <div class="f"><label class="tip" data-tip="留空则不过滤，负利润也显示">最低净利 ¥</label><input id="minProfit" type="number" placeholder="不限"></div>
+      <div class="f"><label class="tip" data-tip="留空则不过滤">最低 ROI %</label><input id="minRoi" type="number" placeholder="不限"></div>
+      <div class="f"><label>国内到手</label>
+        <select id="posCn"><option value="0">全部</option><option value="1">仅利润为正</option></select></div>
+      <div class="f"><label class="tip" data-tip="得物价格会变，过旧的报价算出的利润不可信">得物报价</label>
+        <select id="quoteAge"><option value="0">不限</option><option value="1">1 天内</option>
+          <option value="3">3 天内</option><option value="7">7 天内</option>
+          <option value="30">30 天内</option></select></div>
+      <div class="f"><label class="tip" data-tip="得物接口 currency=HKD 的报价。只有在任务页把「查 HKD 口径」设为「是」并跑过得物任务后才有值">香港列</label>
+        <select id="showHk"><option value="0">隐藏</option><option value="1">显示</option></select></div>
+      <div class="f"><label class="tip" data-tip="仅韩国站能拿到尺码库存；美国站无此数据，勾选后会全部过滤掉">只显示有货</label>
+        <select id="stockOnly"><option value="0">全部</option><option value="1">仅有货</option></select></div>
+      <div class="f"><label>&nbsp;</label><button class="ghost" id="reset">重置</button></div>
+      <div class="f"><label>&nbsp;</label><button class="ghost" id="clearOv">清除单品自定义</button></div>
+      <div class="fx" id="ovInfo"></div>
+    </div>
+  </div>
+
+  <div class="fresh" id="fresh">数据新鲜度加载中…</div>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="pager" id="pagerTop"></div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th data-k="sku" title="货号前的圆点表示数据新鲜度：绿=24小时内，黄=1-7天，红=超过7天，灰=未知。鼠标悬停看明细">货号</th><th>名称</th>
+        <th class="tight nosort"><select id="catFilter" class="hsel"><option value="">类别</option></select></th>
+        <th class="tight">尺码</th>
+        <th class="tight" data-k="in_stock">库存</th>
+        <th>促销码</th>
+        <th class="num tight" title="留空则用商品自带折扣">折扣</th>
+        <th class="num tight" title="留空则用上方统一运费">运费</th>
+        <th data-k="price_usd" class="num" id="thPrice">售价 $</th>
+        <th data-k="net_usd" class="num" id="thNet" title="货款实付，不含运费">货款 $</th>
+        <th data-k="cost_cny" class="num" id="thCost" title="货款折算 + 运费">成本 ¥</th>
+        <th data-k="hk_price" class="num" title="得物接口 globalMinPrice（currency=CNY）。名字里的 global 即全球最低报价——实测 countryCode 传 CN 或 HK 返回完全相同，只有 currency 会换算。乘以 1.155 得到右侧「国内 ¥」，系数由 5 个货号 49 个尺码对照买家端实付价标定（1.150~1.157）">全球</th>
+        <th data-k="hk_global" class="num col-hk" title="同一个 globalMinPrice 按 currency=HKD 查回的接口值。抓取默认不查这个口径（会让价格调用翻倍），未查到就显示 — ；要取值请在任务页把「查 HKD 口径」设为「是」再跑得物任务">香港</th>
+        <th data-k="cn_price" class="num" title="CN × 1.155，即买家端实付价的估计值">国内 ¥</th>
+        <th data-k="payout_cn" class="num" title="国内价 × (1−5%−1%−2.5%) − 38 − 10">国内到手</th>
+        <th data-k="profit_cn" class="num">国内净利</th>
+        <th data-k="roi" class="num" title="国内净利 ÷ 到岸成本。成本 = 货款折人民币 + 运费">ROI</th>
+        <th data-k="monthly_sales" class="num">月销</th>
+        <th class="num" title="得物接口返回的 globalMonthToMonthRatio，30 天销量环比，我们不做二次计算">环比</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="loading" hidden>加载中…</div>
+    <div class="empty" id="empty" hidden>暂无数据</div>
+  </div>
+  <div class="pager" id="pagerBottom"></div>
+</div>
+
+<div class="modal" id="skuModal" hidden>
+  <div class="sheet sheetwrap">
+    <button class="ghost close" id="skuClose">关闭</button>
+    <div id="skuBody"></div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let RAW = [], FEES = null, sortBy = 'profit_cn', order = 'desc';
+let SITE = 'us', FX = null, loadSeq = 0;
+let page = 0, pageSize = 100, lastRows = [];
+/* 各站已加载的原始响应。切国家来回看很常见，没必要每次重新请求 4MB。
+   任务跑完后 pollJob 会清掉，保证不看陈旧数据。 */
+const CACHE = {};
+const CAT = {
+  'men-shoes':'男鞋', 'women-shoes':'女鞋', 'kids-shoes':'童鞋',
+  'men-clothing':'男装', 'women-clothing':'女装', 'kids-clothing':'童装',
+  'accessories':'配件', 'sale':'特价',
+};
+const CFG = {
+  us: {cur:'$',  fxKey:'usd_cny', fxLabel:'汇率 USD→CNY', rmn:true,  step:'0.0001'},
+  kr: {cur:'₩',  fxKey:'krw_cny', fxLabel:'汇率 KRW→CNY', rmn:false, step:'0.000001'},
+  jp: {cur:'¥',  fxKey:'jpy_cny', fxLabel:'汇率 JPY→CNY', rmn:false, step:'0.000001'},
+  gb: {cur:'£',  fxKey:'gbp_cny', fxLabel:'汇率 GBP→CNY', rmn:false, step:'0.0001'},
+  ca: {cur:'C$', fxKey:'cad_cny', fxLabel:'汇率 CAD→CNY', rmn:false, step:'0.0001'},
+};
+/* 单品级覆盖：{ sku: {promo: 0.7, ship: 3.5} }，存 localStorage，刷新不丢 */
+let OVERRIDES = {};
+try { OVERRIDES = JSON.parse(localStorage.getItem('dewu_overrides') || '{}'); } catch (e) {}
+const saveOv = () => { try { localStorage.setItem('dewu_overrides', JSON.stringify(OVERRIDES)); } catch (e) {} };
+
+const num = id => Number($('#' + id).value) || 0;
+
+/* 香港列显示开关。默认隐藏 —— 抓取默认不查 HKD 口径，整列都是 — 。 */
+function applyHkCol() {
+  const show = $('#showHk').value === '1';
+  document.body.classList.toggle('hide-hk', !show);
+  try { localStorage.setItem('show_hk', show ? '1' : '0'); } catch (e) {}
+}
+
+/* ── 数据新鲜度 ─────────────────────────────────────────────────────
+   后端给的时间都是带 Z 的 UTC 串，Date.parse 后按本地时区展示。 */
+const HOUR_MS = 3600000;
+const ageH = iso => iso ? (Date.now() - Date.parse(iso)) / HOUR_MS : null;
+
+function ago(iso) {
+  const h = ageH(iso);
+  if (h === null) return '未记录';
+  if (h < 1) return Math.max(1, Math.round(h * 60)) + ' 分钟前';
+  if (h < 48) return h.toFixed(1) + ' 小时前';
+  return (h / 24).toFixed(1) + ' 天前';
+}
+function freshCls(h) {
+  if (h === null) return 'f3';
+  if (h < 24) return 'f0';
+  if (h < 24 * 7) return 'f1';
+  return 'f2';
+}
+function stamp(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso), p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+       + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+}
+/* 行级圆点：颜色取三个环节里【最旧】的那个 —— 一行数据能不能信，
+   由最陈旧的环节决定。任一环节缺时间戳则最高只给黄色，不给绿色。 */
+function freshDot(r) {
+  const parts = [['Adidas 抓取', r.adidas_at],
+                 ['尺码更新  ', r.sizes_at],
+                 ['得物报价  ', r.dewu_at]];
+  const known = parts.map(x => ageH(x[1])).filter(a => a !== null);
+  let cls = known.length ? freshCls(Math.max.apply(null, known)) : 'f3';
+  if (known.length < parts.length && cls === 'f0') cls = 'f1';
+  const tip = parts.map(x => x[0] + '  ' + stamp(x[1]) + '  (' + ago(x[1]) + ')')
+                   .join('&#10;');
+  return '<span class="dot ' + cls + '" data-tip="' + tip + '"></span>';
+}
+/* 空字符串视为「不限」，返回 null；填了才参与过滤 */
+const lim = id => { const v = $('#' + id).value.trim(); return v === '' ? null : Number(v); };
+const fmt = (v, d = 0) => v == null || isNaN(v) ? '—'
+  : Number(v).toLocaleString('zh-CN', {minimumFractionDigits: d, maximumFractionDigits: d});
+
+/* 单行试算：返利按各自比例相加，RetailMeNot 部分单笔封顶 $50 */
+function calc(r) {
+  const ov = OVERRIDES[r.sku] || {};
+  // 折扣优先级：单品自定义 > 全局折扣 > 商品自带促销码 > 原价
+  const gp = $('#promo').value.trim();
+  const promo = ov.promo != null ? ov.promo
+              : (gp !== '' ? Number(gp) : (r.promo_rate ?? 1));
+  const afterPromo = r.price_usd * promo;
+
+  const cbRakuten = afterPromo * num('rakuten') / 100;
+  // 韩国站没有 RetailMeNot；美国站单笔封顶 $50
+  const cbRmn = CFG[SITE].rmn ? Math.min(afterPromo * num('rmn') / 100, 50) : 0;
+  const cbBank    = afterPromo * num('bank') / 100;
+  const cashback  = cbRakuten + cbRmn + cbBank;
+
+  const tax = afterPromo * num('tax') / 100;
+  const netUsd = afterPromo - cashback + tax;          // 美元侧：货款实付
+  // 运费以人民币计，单品自定义 > 全局统一，不经汇率换算
+  const shipCny = ov.ship != null ? ov.ship : num('ship');
+  const costCny = netUsd * num('fx') + shipCny;        // 到岸总成本
+
+  // ── 得物到手价：国内 / 香港两套口径同时计算，并列展示 ────────────────
+  // 接口返回的原始报价（globalMinPrice，currency=CNY），前端列名「CN」。
+  // 实测它 × 1.155 ≈ 得物 App 里买家的实付价，系数由 49 个尺码标定。
+  const cnBase = r.dewu_price;
+
+  // 国内卖出：成交基数扣 技术5% + 转账1% + 售后无忧2.5%，再减 操作38 + 邮费补贴10
+  const f = FEES || {tax_rate:0.155, tech_fee_rate:0.05, transfer_fee_rate:0.01,
+                     after_sale_rate:0.025, operate_fee:38, postage_subsidy:10};
+  const cnPrice = cnBase * (1 + f.tax_rate);
+  const payoutCn = cnPrice * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)
+                   - f.operate_fee - f.postage_subsidy;
+
+  const costLocal = costCny;
+  const profitCn = payoutCn - costLocal;
+  // 只保留国内这一条路：接口给的不是香港挂牌价，那套港币费用模型没有真实标的，
+  // 香港到手/香港净利两列已移除，profit 与 ROI 都以国内口径为准。
+  const profit = profitCn;
+  return {...r, after_promo: afterPromo, cashback, net_usd: netUsd, ship_cny: shipCny,
+          dewu_age_h: ageH(r.dewu_at),
+          hk_price: cnBase, cn_price: cnPrice,
+          // 只认接口真值。用汇率从「全球」列换算出来的不是得物给的数，
+          // 显示它等于凭空造数据 —— 没查到就老实显示 —— 。
+          hk_global: r.dewu_price_hk ?? null,
+          payout_cn: payoutCn, profit_cn: profitCn,
+          cost_cny: costLocal, payout: payoutCn, profit,
+          roi: costLocal ? profit / costLocal : 0};
+}
+
+/* 该商品当前生效的折扣（不含单品覆盖），用于输入框占位提示 */
+function effPromo(r) {
+  const gp = $('#promo').value.trim();
+  return gp !== '' ? Number(gp) : (r.promo_rate ?? 1);
+}
+
+function fillCategories() {
+  const sel = $('#catFilter'), keep = sel.value;
+  const cats = [...new Set(RAW.map(r => r.category).filter(Boolean))]
+    .sort((a, b) => (CAT[a] || a).localeCompare(CAT[b] || b, 'zh'));
+  sel.innerHTML = '<option value="">类别（全部）</option>' +
+    cats.map(c => `<option value="${c}">${CAT[c] || c}</option>`).join('');
+  sel.value = cats.includes(keep) ? keep : '';
+  sel.classList.toggle('active', !!sel.value);
+}
+
+function renderPager(total) {
+  const maxPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  const from = total ? page * pageSize + 1 : 0;
+  const to = Math.min((page + 1) * pageSize, total);
+  const html = `
+    <button class="ghost" data-p="0" ${page === 0 ? 'disabled' : ''}>« 首页</button>
+    <button class="ghost" data-p="${page - 1}" ${page === 0 ? 'disabled' : ''}>‹ 上一页</button>
+    <span>${fmt(from)}–${fmt(to)} / 共 ${fmt(total)} 条 · 第 ${page + 1}/${maxPage + 1} 页</span>
+    <button class="ghost" data-p="${page + 1}" ${page >= maxPage ? 'disabled' : ''}>下一页 ›</button>
+    <button class="ghost" data-p="${maxPage}" ${page >= maxPage ? 'disabled' : ''}>末页 »</button>
+    <select id="pageSize">${[50, 100, 200, 500].map(v =>
+      `<option value="${v}"${v === pageSize ? ' selected' : ''}>${v} 条/页</option>`).join('')}</select>`;
+  ['#pagerTop', '#pagerBottom'].forEach(sel => { $(sel).innerHTML = html; });
+  document.querySelectorAll('.pager button[data-p]').forEach(b => b.onclick = () => {
+    page = Number(b.dataset.p); render();
+    document.querySelector('.tablewrap').scrollIntoView({block: 'start'});
+  });
+  document.querySelectorAll('.pager #pageSize').forEach(s => s.onchange = e => {
+    pageSize = Number(e.target.value); page = 0; render();
+  });
+}
+
+function render() {
+  const minSales = num('minSales');
+  const minProfit = lim('minProfit');
+  const minRoiPct = lim('minRoi');
+  const stockOnly = $('#stockOnly').value === '1';
+  const posCn = $('#posCn').value === '1';
+  const cat = $('#catFilter').value;
+  const maxAgeH = Number($('#quoteAge').value || 0) * 24;
+  let rows = RAW.map(calc).filter(r =>
+    r.payout != null                       // 该市场没有报价的行不参与
+    && (r.monthly_sales || 0) >= minSales
+    && (minProfit === null || r.profit >= minProfit)
+    && (minRoiPct === null || r.roi >= minRoiPct / 100)
+    && (!stockOnly || r.in_stock === true)
+    && (!posCn || r.profit_cn > 0)
+    && (!cat || r.category === cat)
+    && (!maxAgeH || (r.dewu_age_h != null && r.dewu_age_h <= maxAgeH)));
+
+  const dir = order === 'desc' ? -1 : 1;
+  rows.sort((a, b) => {
+    const x = a[sortBy], y = b[sortBy];
+    if (typeof x === 'string') return dir * x.localeCompare(y);
+    return dir * ((x ?? -Infinity) - (y ?? -Infinity));
+  });
+
+  const pos = rows.filter(r => r.profit > 0);
+  const best = rows.length ? Math.max(...rows.map(r => r.profit)) : 0;
+  $('#stats').innerHTML = [
+    ['符合条件', rows.length], ['其中净利为正', pos.length],
+    ['最高净利 ¥', Math.round(best)],
+    ['数据总量', RAW.length],
+  ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`).join('');
+
+  $('#empty').hidden = rows.length > 0;
+  lastRows = rows;
+  const maxPage = Math.max(0, Math.ceil(rows.length / pageSize) - 1);
+  if (page > maxPage) page = maxPage;
+  const pageRows = rows.slice(page * pageSize, (page + 1) * pageSize);
+  $('#rows').innerHTML = pageRows.map(r => {
+    const cls = r.profit > 0 ? 'pos' : 'neg';
+    const mom = r.sales_mom == null ? '—'
+      : (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom * 100).toFixed(1) + '%';
+    const link = r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${r.sku}</a>` : r.sku;
+    const ov = OVERRIDES[r.sku] || {};
+    const code = r.promo_code
+      ? `<span class="code">${r.promo_code} ${Math.round((1 - r.promo_rate) * 100)}%off</span>`
+      : '<span class="tag">无</span>';
+    return `<tr>
+      <td class="sku">${freshDot(r)}${link}</td>
+      <td class="name" title="${(r.name || '').replace(/"/g, '&quot;')}">${r.name || '—'}</td>
+      <td><span class="cat">${CAT[r.category] || r.category || '—'}</span></td>
+      <td class="tight"><span class="tag">${r.size ?? '—'}</span></td>
+      <td class="tight">${
+        r.in_stock === true ? '<span class="stk ok">有货</span>'
+      : r.in_stock === false ? '<span class="stk no">断码</span>'
+      : '<span class="stk unk" title="该站点无尺码库存数据">—</span>'}</td>
+      <td>${code}</td>
+      <td class="num"><input class="ov" data-f="promo" data-sku="${r.sku}" type="number" step="0.01"
+                 min="0" max="1" value="${ov.promo ?? ''}" placeholder="${effPromo(r).toFixed(2)}"></td>
+      <td class="num"><input class="ov" data-f="ship" data-sku="${r.sku}" type="number" step="0.1"
+                 min="0" value="${ov.ship ?? ''}" placeholder="${num('ship')}"></td>
+      <td class="num">${fmt(r.price_usd, 2)}</td>
+      <td class="num">${fmt(r.net_usd, 2)}</td>
+      <td class="num">${fmt(r.cost_cny)}</td>
+      <td class="num">${fmt(r.hk_price)}</td>
+      <td class="num col-hk">${r.hk_global != null ? fmt(r.hk_global) : '<span class="stk unk">—</span>'}</td>
+      <td class="num">${fmt(r.cn_price)}</td>
+      <td class="num">${fmt(r.payout_cn)}</td>
+      <td class="num ${r.profit_cn > 0 ? 'pos' : 'neg'}">${r.profit_cn > 0 ? '+' : ''}${fmt(r.profit_cn)}</td>
+      <td class="num ${cls}">${(r.roi * 100).toFixed(0)}%</td>
+      <td class="num">${fmt(r.monthly_sales)}</td>
+      <td class="num">${mom}</td>
+    </tr>`;
+  }).join('');
+
+  document.querySelectorAll('th[data-k]').forEach(th =>
+    th.classList.toggle('on', th.dataset.k === sortBy));
+  document.querySelectorAll('input.ov').forEach(el =>
+    el.classList.toggle('set', el.value.trim() !== ''));
+  const n = Object.keys(OVERRIDES).length;
+  $('#ovInfo').textContent = n ? `已自定义 ${n} 个商品` : '';
+  renderPager(rows.length);
+}
+
+async function loadFreshness() {
+  const seq = loadSeq, site = SITE;
+  try {
+    const d = await (await fetch('/arbitrage/freshness?site=' + site)).json();
+    if (seq !== loadSeq || site !== SITE) return;        // 切站了，丢弃迟到结果
+    const flag = {us:'🇺🇸', kr:'🇰🇷', jp:'🇯🇵', gb:'🇬🇧', ca:'🇨🇦'}[site] || '';
+    const seg = (label, o) => {
+      if (!o || !o.count) return label + ' <b>未记录</b>';
+      const h = ageH(o.newest), cls = freshCls(h);
+      const c = cls === 'f2' ? 'bad' : cls === 'f1' ? 'warn' : '';
+      return label + ' <b class="' + c + '">' + ago(o.newest) + '</b>'
+           + '<span class="sep"> · 最旧 ' + ago(o.oldest) + '</span>';
+    };
+    const q = d.dewu_quotes || {}, bk = q.buckets || {};
+    const cov = d.coverage || {};
+    const covPct = cov.site_skus ? (cov.with_quote / cov.site_skus * 100).toFixed(0) : 0;
+    const fxAgo = (FX && FX.fetched_at) ? ago(FX.fetched_at) : '—';
+    $('#fresh').innerHTML =
+        '<span>' + flag + ' ' + seg('Adidas 价格', d.adidas_price) + '</span>'
+      + '<span>' + seg('尺码', d.adidas_sizes) + '</span>'
+      + '<span>' + seg('得物报价', q)
+        + (bk.d7 != null && q.count ? '<span class="sep"> · 7天内 ' + fmt(bk.d7)
+             + '/' + fmt(q.count) + '</span>' : '') + '</span>'
+      + '<span>得物覆盖 <b>' + fmt(cov.with_quote) + '/' + fmt(cov.site_skus)
+        + '</b> (' + covPct + '%)</span>'
+      + '<span>汇率 <b>' + fxAgo + '</b></span>';
+  } catch (e) { $('#fresh').textContent = '数据新鲜度获取失败'; }
+}
+
+async function loadFx() {
+  try {
+    const d = await (await fetch('/arbitrage/fx')).json();
+    FX = d;
+    const key = CFG[SITE].fxKey;
+    if (d[key] != null) $('#fx').value = Number(d[key]).toFixed(6);
+    $('#fxInfo').innerHTML = d.live
+      ? `USD→CNY ${d.usd_cny} · HKD→CNY ${(d.usd_cny / d.usd_hkd).toFixed(4)}`
+        + ` · KRW→CNY ${d.krw_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
+      : `未取到实时汇率，使用配置值`;
+  } catch (e) {
+    // 别一律回落 7.12 —— 那是 USD→CNY，日元用它成本会虚高约 148 倍。
+    // 按当前站点的币种给个数量级正确的兜底，并明确提示不可信。
+    const FB = {usd_cny:7.1, krw_cny:0.0052, jpy_cny:0.047, gbp_cny:9.0, cad_cny:5.0};
+    $('#fx').value = FB[CFG[SITE].fxKey] ?? 7.1;
+    $('#fxInfo').textContent = '汇率获取失败，已填兜底值，请核对后手改';
+  }
+}
+
+async function loadData() {
+  const seq = ++loadSeq;
+  const site = SITE;
+  RAW = [];                                  // 先清空，避免上一站数据残留在表里
+  $('#rows').innerHTML = '';
+  $('#empty').hidden = true;
+  $('#loading').hidden = false;
+  $('#stats').innerHTML = '';
+  try {
+    const cached = CACHE[site];
+    const d = cached || await (await fetch('/arbitrage/raw?site=' + site)).json();
+    // 期间用户又切了站/再次加载 -> 丢弃这次的迟到结果
+    if (seq !== loadSeq) return;
+    CACHE[site] = d;                           // 同一次会话内切回来不再请求
+    // 服务端把商品信息按货号存一份（name/url 原本随每个尺码重复），这里摊平回扁平结构
+    const P = d.products || {};
+    RAW = (d.items || []).map(r => ({...(P[r.sku] || {}), ...r}));
+    FEES = d.sell_cn_fees;
+    fillCategories();
+    render();
+    loadFreshness();
+  } catch (e) {
+    if (seq === loadSeq) $('#empty').hidden = false;
+  } finally {
+    if (seq === loadSeq) {
+      $('#loading').hidden = true;
+      document.querySelectorAll('.tabs button.loading').forEach(b => b.classList.remove('loading'));
+    }
+  }
+}
+
+/* 单品覆盖：change(失焦或回车) 时写入并重算 */
+$('#rows').addEventListener('change', e => {
+  const el = e.target;
+  if (!el.classList.contains('ov')) return;
+  const sku = el.dataset.sku, field = el.dataset.f;
+  const raw = el.value.trim();
+  OVERRIDES[sku] = OVERRIDES[sku] || {};
+  if (raw === '') delete OVERRIDES[sku][field];
+  else OVERRIDES[sku][field] = Number(raw);
+  if (!Object.keys(OVERRIDES[sku]).length) delete OVERRIDES[sku];
+  saveOv(); render();
+});
+$('#rows').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.classList.contains('ov')) e.target.blur();
+});
+
+async function switchSite(site) {
+  if (SITE === site && RAW.length) return;
+  // 不禁用其他 tab —— loadData 里的 loadSeq 序号守卫已经会丢弃迟到结果，
+  // 禁用只会让人在加载期间点不动，还以为页面卡死了。
+  SITE = site;
+  const c = CFG[site];
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.classList.toggle('active', b.dataset.site === site);
+    b.classList.remove('loading');
+  });
+  document.querySelector(`.tabs button[data-site="${site}"]`)?.classList.add('loading');
+  $('#rmnBox').hidden = !c.rmn;                     // 韩国站隐藏 RetailMeNot
+  $('#fxLabel').textContent = c.fxLabel;
+  $('#fx').step = c.step;
+  $('#thPrice').textContent = `Adidas 售价 ${c.cur}`;
+  $('#thNet').textContent = `货款 ${c.cur}`;
+  // 切站必须换汇率。缺这个币种时不能沿用上一站的值 —— 那会把英镑当日元用。
+  const FB = {usd_cny:7.1, krw_cny:0.0052, jpy_cny:0.047, gbp_cny:9.0, cad_cny:5.0};
+  const rate = (FX && FX[c.fxKey] != null) ? Number(FX[c.fxKey]) : FB[c.fxKey];
+  if (rate != null) $('#fx').value = Number(rate).toFixed(6);
+  await loadData();
+}
+document.querySelectorAll('.tabs button').forEach(b =>
+  b.onclick = () => switchSite(b.dataset.site));
+
+$('#apply').onclick = () => { page = 0; render(); };
+$('#reset').onclick = () => {
+  $('#promo').value = '';
+  ['rakuten','rmn','bank','ship','tax'].forEach((k, i) => $('#' + k).value = ['',0,3,0,0][i]);
+  $('#minSales').value = 20; $('#minProfit').value = ''; $('#minRoi').value = '';
+  $('#stockOnly').value = '0'; $('#posCn').value = '0';
+  $('#showHk').value = '0'; applyHkCol();
+  $('#quoteAge').value = '0';
+  $('#catFilter').value = '';
+  loadFx().then(render);
+};
+/* 参数框回车即重算。排除货号搜索框 —— 它的回车是「去查这个货号」，
+   不该顺带触发一次全表重算。 */
+document.querySelectorAll('input:not(#skuSearch)').forEach(el =>
+  el.addEventListener('keydown', e => { if (e.key === 'Enter') render(); }));
+$('#clearOv').onclick = () => { OVERRIDES = {}; saveOv(); render(); };
+$('#sortBy').onchange = () => { sortBy = $('#sortBy').value; page = 0; render(); };
+$('#stockOnly').onchange = () => { page = 0; render(); };
+$('#showHk').onchange = applyHkCol;
+try { $('#showHk').value = localStorage.getItem('show_hk') === '1' ? '1' : '0'; } catch (e) {}
+applyHkCol();
+$('#quoteAge').onchange = () => { page = 0; render(); };
+$('#catFilter').onchange = e => {
+  e.target.classList.toggle('active', !!e.target.value);
+  page = 0; render();
+};
+$('#posCn').onchange = () => { page = 0; render(); };
+document.querySelectorAll('th[data-k]').forEach(th => th.onclick = (ev) => {
+  if (ev.target.tagName === 'SELECT') return;
+  const k = th.dataset.k;
+  if (sortBy === k) order = order === 'desc' ? 'asc' : 'desc';
+  else { sortBy = k; order = 'desc'; }
+  $('#sortBy').value = ['profit','roi','monthly_sales'].includes(k) ? k : $('#sortBy').value;
+  render();
+});
+
+/* ── 货号搜索 ───────────────────────────────────────────────────────
+   走 /lookup/{货号}，按货号横切五个站 —— 和主表按站点切片的视角互补。
+   得物报价默认读库，不实时调接口，免得每次搜索都消耗得物的日额度。 */
+const CUR = {USD:'$', KRW:'₩', JPY:'¥', GBP:'£', CAD:'C$'};
+
+function stkTag(v) {
+  if (v === true) return '<span class="stk2 y">有</span>';
+  if (v === false) return '<span class="stk2 n">断</span>';
+  return '<span class="stk2 u">?</span>';
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+async function searchSku() {
+  const q = $('#skuSearch').value.trim().toUpperCase();
+  if (!q) return;
+  $('#skuModal').hidden = false;
+  $('#skuBody').innerHTML = '<div class="mzero">查询 ' + esc(q) + ' …</div>';
+  let d;
+  try {
+    const r = await fetch('/lookup/' + encodeURIComponent(q));
+    if (r.status === 404) {
+      $('#skuBody').innerHTML = '<div class="mzero">没找到货号 <b>' + esc(q)
+        + '</b><br>五国官网与得物都没有这个货号的记录</div>';
+      return;
+    }
+    d = await r.json();
+  } catch (e) {
+    $('#skuBody').innerHTML = '<div class="mzero">查询失败，请重试</div>';
+    return;
+  }
+
+  const dw = d.dewu || {};
+  const head = '<h3>' + esc(d.sku) + '</h3><div class="meta">'
+    + '覆盖 ' + d.site_count + ' 个站 · 得物'
+    + (dw.found ? '有报价（' + (dw.source === 'live' ? '实时' : '库存数据')
+        + (dw.fetched_at ? ' · ' + ago(dw.fetched_at) : '') + '）'
+      : '无报价' + (dw.note ? '（' + esc(dw.note) + '）' : ''))
+    + (dw.title ? ' · ' + esc(dw.title) : '') + '</div>';
+
+  const rows = d.sites.map(s => {
+    const c = CUR[s.currency] || (s.currency || '');
+    const off = s.promo_rate ? Math.round((1 - s.promo_rate) * 100) + '%off' : '';
+    return '<tr>'
+      + '<td>' + esc(s.site_cn) + '</td>'
+      + '<td class="num">' + (s.orig_price != null ? c + s.orig_price : '—') + '</td>'
+      + '<td class="num">' + (s.sale_price != null ? c + s.sale_price : '—') + '</td>'
+      + '<td>' + (s.promo_code ? esc(s.promo_code) + ' ' + off : '—') + '</td>'
+      + '<td class="num">' + s.size_count + '</td>'
+      + '<td>' + (s.is_sold_out ? '<span class="stk2 n">售罄</span>' : '—') + '</td>'
+      + '<td>' + (s.scraped_at ? ago(s.scraped_at) : '—') + '</td>'
+      + '<td class="gap">' + (s.url ? '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">打开</a>' : '') + '</td>'
+      + '</tr>';
+  }).join('');
+
+  const siteTbl = '<h4>各国售价</h4><table><thead><tr>'
+    + '<th>站点</th><th class="num">原价</th><th class="num">折后</th>'
+    + '<th>促销码</th><th class="num">尺码数</th><th>状态</th>'
+    + '<th>抓取于</th><th class="gap"></th></tr></thead><tbody>'
+    + (rows || '<tr><td colspan="8">各国官网都没有这个货号</td></tr>')
+    + '</tbody></table>';
+
+  let sizeTbl = '';
+  if (d.sizes && d.sizes.length) {
+    const cols = d.sites.map(s => s.site);
+    sizeTbl = '<h4>尺码 · 得物报价与各国库存</h4><table><thead><tr>'
+      + '<th>尺码</th><th class="num">得物 ¥</th><th class="num">月销</th>'
+      + '<th class="num">环比</th>'
+      + cols.map(s => '<th class="mid">' + esc(SITE_CN[s] || s) + '</th>').join('')
+      + '<th class="gap"></th></tr></thead><tbody>'
+      + d.sizes.map(r => '<tr>'
+        + '<td>' + esc(r.size) + '</td>'
+        + '<td class="num">' + (r.dewu_price != null ? r.dewu_price : '—') + '</td>'
+        + '<td class="num">' + (r.monthly_sales || 0) + '</td>'
+        + '<td class="num">' + (r.sales_mom == null ? '—'
+            : (r.sales_mom >= 0 ? '+' : '') + (r.sales_mom * 100).toFixed(0) + '%') + '</td>'
+        + cols.map(s => '<td class="mid">' + stkTag((r.in_stock || {})[s]) + '</td>').join('')
+        + '<td class="gap"></td></tr>').join('')
+      + '</tbody></table>'
+      + '<div class="meta" style="margin-top:8px">'
+      + '得物价为香港报价（人民币结算）；库存「?」表示该站没有尺码数据或写法暂不支持</div>';
+  }
+  $('#skuBody').innerHTML = head + siteTbl + sizeTbl;
+}
+
+const SITE_CN = {us:'美国', kr:'韩国', jp:'日本', gb:'英国', ca:'加拿大'};
+
+$('#skuGo').onclick = searchSku;
+$('#skuSearch').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.stopPropagation(); searchSku(); }
+});
+$('#skuClose').onclick = () => { $('#skuModal').hidden = true; };
+$('#skuModal').addEventListener('click', e => {
+  if (e.target.id === 'skuModal') $('#skuModal').hidden = true;   // 点遮罩关闭
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') $('#skuModal').hidden = true;
+});
+/* 表格里的货号点一下也能查 —— 比复制粘贴到搜索框快 */
+$('#rows').addEventListener('click', e => {
+  const a = e.target.closest('td.sku a');
+  if (!a || !e.altKey) return;      // Alt+点击查详情，普通点击仍是打开官网
+  e.preventDefault();
+  $('#skuSearch').value = a.textContent.trim();
+  searchSku();
+});
+
+/* ── 任务状态（面板已独立到 /ui/tasks，这里只留一个轻量指示灯）──────
+   作用有二：告诉你现在有任务在跑，以及任务跑完后自动刷新表格。 */
+let jobTimer = null, lastJobStatus = null;
+
+async function pollJob() {
+  let d;
+  try { d = await (await fetch('/jobs/status')).json(); }
+  catch (e) { return; }
+
+  const el = $('#jobBadge');
+  if (d.idle) {
+    el.hidden = true;
+    clearInterval(jobTimer); jobTimer = null;
+    return;
+  }
+  // 响应异常（网络抖动、代理插了一脚）时跳过这一轮就好；
+  // 若继续往下走会把 label/elapsed 读成 undefined，并误判任务已结束而停掉轮询。
+  if (!d || typeof d.status !== 'string') return;
+  const running = d.status === 'running';
+  const label = {running:'运行中', done:'已完成',
+                 failed:'失败', cancelled:'已取消'}[d.status] || d.status;
+
+  if (!running) {
+    // 任务已结束。只有「本页看着它跑完」才值得提示一下并刷新数据；
+    // 否则（比如刚打开页面，看到的是几小时前那次的残留状态）直接不显示。
+    if (lastJobStatus === 'running') {
+      el.hidden = false;
+      el.className = 'jobbadge' + (d.status === 'failed' ? ' err' : '');
+      el.textContent = d.label + ' · ' + label;
+      Object.keys(CACHE).forEach(k => delete CACHE[k]);   // 数据变了，缓存作废
+      loadData();
+    } else {
+      el.hidden = true;
+    }
+    clearInterval(jobTimer); jobTimer = null;   // 结束了就别再轮询
+    lastJobStatus = d.status;
+    return;
+  }
+
+  const mm = String(Math.floor(d.elapsed / 60)).padStart(2, '0');
+  const ss = String(d.elapsed % 60).padStart(2, '0');
+  el.hidden = false;
+  el.className = 'jobbadge run';
+  el.textContent = '● ' + d.label + ' · ' + label + ' · ' + mm + ':' + ss;
+  lastJobStatus = d.status;
+}
+
+function startPolling() {
+  if (jobTimer) clearInterval(jobTimer);
+  pollJob();
+  jobTimer = setInterval(pollJob, 3000);
+}
+
+(async () => { await loadFx(); await loadData(); startPolling(); })();
+</script>
+</body>
+</html>
