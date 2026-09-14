@@ -10,6 +10,10 @@
     source_file，不是当前 product_dao.py 里的 batch_id 字段名；这里做了
     兼容读取。
 
+可重跑：
+    写回时与 products 里已有的 price_list 按 batch_id 合并，不是整段覆盖 ——
+    首轮迁移之后扫描 $push 进去的新价格不会被抹掉。
+
 用法：
     python script/migrate_price_history_to_list.py --dry-run   # 只统计，不写库
     python script/migrate_price_history_to_list.py              # 迁移，不删源集合
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -39,6 +44,29 @@ def build_entry(doc: dict) -> dict:
         "discount_pct": doc.get("discount_pct"),
         "is_sold_out": doc.get("is_sold_out", False),
     }
+
+
+def sort_key(entry: dict) -> datetime:
+    """存量记录是 naive datetime，新写入的是 aware(UTC)，缺字段的当最早；
+    三种混在一起直接比较会 TypeError，这里统一成 aware UTC。"""
+    t = entry.get("observed_at")
+    if not isinstance(t, datetime):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+
+
+def merge(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    """按 batch_id 去重合并，已有的优先；无 batch_id 的记录按 observed_at 去重。"""
+    seen: set = set()
+    out: list[dict] = []
+    for e in list(existing or []) + incoming:
+        key = e.get("batch_id") or ("_t", sort_key(e))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(e)
+    out.sort(key=sort_key)
+    return out
 
 
 def main() -> int:
@@ -75,43 +103,47 @@ def main() -> int:
             print(f"  已读取 {fetched}/{hist_total}", flush=True)
     print(f"  共读取 {fetched} 条，{len(grouped)} 个 (sku, site) 分组")
 
-    ops = []
-    total_entries = 0
-    for (sku, site), docs in grouped.items():
-        docs.sort(key=lambda d: d.get("observed_at") or 0)
-        entries = [build_entry(d) for d in docs]
-        total_entries += len(entries)
-        ops.append(UpdateOne({"sku": sku, "site": site}, {"$set": {"price_list": entries}}))
-
-    print(f"  待写回 products 的更新: {len(ops)} 条，共 {total_entries} 条价格记录")
+    total_entries = sum(len(v) for v in grouped.values())
+    print(f"  待合并进 products 的分组: {len(grouped)} 个，共 {total_entries} 条价格记录")
 
     if args.dry_run:
         print("dry-run，未写库")
         return 0
 
-    written = 0
-    matched = 0
-    for i in range(0, len(ops), BATCH):
-        res = prod.bulk_write(ops[i:i + BATCH], ordered=False)
-        written += len(ops[i:i + BATCH])
-        # matched_count 才是「products 里有没有这个 (sku, site)」；modified_count
-        # 在重跑且内容完全相同时会是 0（MongoDB 判定无变化），不能拿来判断是否命中。
-        matched += res.matched_count
-        print(f"  已处理 {written}/{len(ops)}（实际命中 {matched}）", flush=True)
+    keys = list(grouped.keys())
+    processed = matched = 0
+    for i in range(0, len(keys), BATCH):
+        chunk = keys[i:i + BATCH]
+        # 读出这批商品现有的 price_list 做合并，避免整段覆盖抹掉迁移后新 $push 的记录
+        existing: dict[tuple[str, str], list[dict]] = {}
+        for p in prod.find({"$or": [{"sku": s, "site": t} for s, t in chunk]},
+                           {"sku": 1, "site": 1, "price_list": 1}):
+            existing[(p["sku"], p.get("site", "us"))] = p.get("price_list") or []
+        ops = []
+        for key in chunk:
+            if key not in existing:
+                continue
+            merged = merge(existing[key], [build_entry(d) for d in grouped[key]])
+            ops.append(UpdateOne({"sku": key[0], "site": key[1]},
+                                 {"$set": {"price_list": merged}}))
+        if ops:
+            res = prod.bulk_write(ops, ordered=False)
+            matched += res.matched_count
+        processed += len(chunk)
+        print(f"  已处理 {processed}/{len(keys)}（命中 {matched}）", flush=True)
 
-    missing_products = len(ops) - matched
+    missing_products = len(keys) - matched
     print(f"迁移完成：命中 products {matched} 条，未命中（products 里没有对应 sku+site）{missing_products} 条")
 
+    if not args.drop:
+        print("未加 --drop，price_history 集合保留；确认无误后加 --drop 重跑即可（合并写入，可重复执行）")
+        return 0
     if missing_products:
-        print("警告：部分历史记录在 products 里找不到对应文档，这些历史没有迁移过去。")
-
-    if args.drop:
-        print("删除 price_history 集合 ...")
-        hist.drop()
-        print("已删除 price_history")
-    else:
-        print("未加 --drop，price_history 集合保留，确认数据无误后可单独加 --drop 重跑来删除")
-
+        print("有历史记录没迁移过去，拒绝删除 price_history。先处理未命中的再加 --drop。")
+        return 1
+    print("删除 price_history 集合 ...")
+    hist.drop()
+    print("已删除 price_history")
     return 0
 
 

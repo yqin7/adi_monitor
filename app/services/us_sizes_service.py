@@ -84,16 +84,17 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
         def absorb(d):
             for it in (d or {}).get("itemList", {}).get("items", []):
                 sku = (it.get("productId") or "").strip().upper()
-                sizes = _clean_sizes(it.get("availableSizes"))
-                if sku and sizes:
-                    collected[sku] = sizes
+                # 空列表也要收：整只断码的商品若被滤掉，旧 available_sizes
+                # 永远不清、record_changes 也看不到它，断码永远报不出来。
+                if sku:
+                    collected[sku] = _clean_sizes(it.get("availableSizes"))
 
         absorb(first)
         starts = [p * PAGE_SIZE for p in range(1, pages)]
         with ThreadPoolExecutor(WORKERS) as ex:
             for d in ex.map(lambda st: fetch_page(session, slug, st), starts):
                 absorb(d)
-        report(f"  [{slug}] 累计 {len(collected)} 个 SKU 有尺码")
+        report(f"  [{slug}] 累计 {len(collected)} 个 SKU")
 
     # 与国际站同一套健康门槛：抓崩了要明确报错，不能安静返回 0
     prev = prod.count_documents({"site": "us", "available_sizes": {"$exists": True}})

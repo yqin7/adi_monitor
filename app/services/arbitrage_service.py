@@ -351,6 +351,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
             continue
         cur = d.get("currency") or SITE_CURRENCY.get(d.get("site", "us"), "USD")
         d["_usd"] = to_usd(local, cur, rates)
+        d["_list_usd"] = round(to_usd(d["orig_price"], cur, rates), 2) if d.get("orig_price") else None
         d["_site"] = d.get("site", "us")
         # 同一货号多个站都有时，留采购成本最低的那个 —— 比价本来就该挑最便宜的进货地
         cur_best = products.get(d["sku"])
@@ -397,7 +398,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
                 "site": p["_site"],
                 "local_price": p.get("sale_price") or p.get("orig_price"),
                 "local_currency": p.get("currency"),
-                "adidas_list_usd": p.get("orig_price"),
+                "adidas_list_usd": p["_list_usd"],
                 "adidas_price_usd": round(usd, 2),
                 "promo_code": p.get("promo_code"),
                 "promo_rate": p.get("promo_rate"),

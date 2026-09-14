@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from app.dao.arbitrage_dao import ArbitrageDAO
 from app.dao.mongo_client import MongoConnection
@@ -166,16 +166,22 @@ def freshness(site: str = Query("us", description="us | kr | jp | gb | ca")):
 
 
 @router.post("/refresh", summary="拉取得物报价（后台执行）")
-def refresh(background: BackgroundTasks,
-            limit: int | None = Query(None, description="本轮最多查询多少个货号"),
+def refresh(limit: int | None = Query(None, description="本轮最多查询多少个货号"),
             only_discounted: bool = Query(True, description="只查 Adidas 打折商品"),
             include_missed: bool = Query(False, description="是否重试历史未命中货号"),
             max_quote_age_days: int | None = Query(
                 None, description="只重查报价超过 N 天的货号，省调用额度")):
-    background.add_task(arbitrage_service.refresh_quotes,
-                        limit=limit, only_discounted=only_discounted,
-                        include_missed=include_missed,
-                        max_quote_age_days=max_quote_age_days)
+    # 走 job_runner 的互斥：直接丢 BackgroundTasks 会和定时/手动 dewu 任务并发打接口触发限流
+    from app.services import job_runner
+
+    ok, msg = job_runner.start(
+        "dewu", "拉取得物报价",
+        lambda job: arbitrage_service.refresh_quotes(
+            limit=limit, only_discounted=only_discounted,
+            include_missed=include_missed, max_quote_age_days=max_quote_age_days,
+            progress=job.log, should_stop=job.cancel.is_set))
+    if not ok:
+        raise HTTPException(409, msg)
     return {"message": "已在后台开始拉取得物报价", "limit": limit,
             "only_discounted": only_discounted,
             "max_quote_age_days": max_quote_age_days}

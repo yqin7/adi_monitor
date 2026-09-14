@@ -39,15 +39,18 @@ class ProductDAO:
             query = {"sku": {"$in": normalized}}
         return list(self.collection.find(query, {"_id": 0}))
 
-    def find_by_sku(self, sku: str) -> dict[str, Any] | None:
-        return self.collection.find_one({"sku": sku})
+    # 监控列表扫描走的是 adidas.com/us 接口，快照只属于美国站。
+    # 主键是 (sku, site)：不带 site 的话要么覆盖别国站的文档，
+    # 要么 upsert 出一条 site=null 的孤儿，/lookup 就会出重复行。
+    def find_by_sku(self, sku: str, site: str = "us") -> dict[str, Any] | None:
+        return self.collection.find_one({"sku": sku, "site": site})
 
-    def save_snapshot(self, sku: str, document: dict[str, Any]) -> None:
+    def save_snapshot(self, sku: str, document: dict[str, Any], site: str = "us") -> None:
         """更新/插入单条产品快照（供扫描流程逐条写入）"""
         self.collection.update_one(
-            {"sku": sku},
+            {"sku": sku, "site": site},
             {
-                "$set": document,
+                "$set": {**document, "site": site},
                 "$setOnInsert": {"created_at": datetime.utcnow()},
             },
             upsert=True,
