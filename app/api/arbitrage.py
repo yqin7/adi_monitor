@@ -252,7 +252,8 @@ def fx():
 
 @router.get("/raw", summary="尺码级原始数据（供前端自行试算）")
 def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 | gb 英国 | ca 加拿大"),
-        min_sales: int = Query(0, ge=0), limit: int = Query(8000, ge=1, le=30000),
+        min_sales: int = Query(0, ge=0),
+        limit: int = Query(50000, ge=1, le=50000, description="最多返回的尺码行数；超出时响应带 truncated=true"),
         no_cache: bool = Query(False, description="强制重建，跳过缓存")):
     """返回计算利润所需的原始字段，不做任何费用假设。
 
@@ -298,6 +299,7 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
 
     out_prods: dict[str, dict] = {}
     rows: list[dict] = []
+    total = 0
     for q in quote_docs:
         p = products.get(q["sku"])
         if not p:
@@ -325,6 +327,9 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
             sales = sz.get("globalSoldNum30") or 0
             if sales < min_sales:
                 continue
+            total += 1
+            if total > limit:
+                continue          # 继续数总数，前端据此提示被截断
             rows.append({
                 "sku": sku, "size": sz.get("size"),
                 # 该尺码 Adidas 侧是否有货：True/False，拿不到尺码时为 None（未知）
@@ -339,13 +344,10 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
                 "sales_mom": sz.get("globalMonthToMonthRatio"),
                 "global_sku_id": sz.get("globalSkuId"),
             })
-            if len(rows) >= limit:
-                break
-        if len(rows) >= limit:
-            break
 
     cfg = get_pricing_config(load_config())
-    payload = {"site": site, "count": len(rows),
+    payload = {"site": site, "count": len(rows), "total": total,
+               "truncated": total > len(rows),
                "sell_cn_fees": cfg["sell_cn"], "sell_hk_fees": cfg["sell_hk"],
                "products": out_prods, "items": rows}
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")

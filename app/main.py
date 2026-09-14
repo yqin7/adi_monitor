@@ -1,6 +1,7 @@
 """FastAPI 微服务入口"""
 import logging
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 
 from app import state
 from app.core.config import load_config, get_mongodb_config
@@ -34,6 +35,8 @@ app = FastAPI(
     "查看下方各分组接口，或访问 /redoc 获取更详细的文档视图。",
     version="1.1.0",
 )
+# /arbitrage/raw 全量返回后单站 1.5–4.7MB JSON，gzip 后约 1/8
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.include_router(system.router)
 app.include_router(products.router)

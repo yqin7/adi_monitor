@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from typing import Any, Callable
 
 # dewu_client 是隔壁仓库 yqin7/dewu-monitor 提供的包（见 requirements.txt）。
@@ -28,7 +29,7 @@ def _dc():
             "（私有仓库，需先配好 GitHub 凭证）") from exc
 
 from app.core.config import load_config
-from app.core.pricing import evaluate, get_pricing_config, passes_filter
+from app.core.pricing import evaluate, get_pricing_config, passes_filter, purchase_cost_usd
 from app.dao.arbitrage_dao import ArbitrageDAO
 from app.dao.mongo_client import MongoConnection
 
@@ -182,9 +183,12 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     retry_stat = {"rate_limited": 0, "slept": 0.0, "gave_up": 0}
 
     def _retrying(fn, c, tag):
+        """成功返回 dict（可能为空 = 成功但无报价）；彻底失败返回 None。
+        两者必须分开：失败若也返回 {}，下游会把「没拿到」当「没报价」
+        写库，覆盖掉原有有效报价并刷新 fetched_at。"""
         for attempt in range(MAX_RETRIES):
             try:
-                return fn(c)
+                return fn(c) or {}
             except Exception as e:
                 msg = str(e)
                 if RATE_LIMIT_CODE in msg and attempt < MAX_RETRIES - 1:
@@ -200,8 +204,8 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                     raise
                 retry_stat["gave_up"] += 1
                 log.warning("%s失败: %s", tag, msg[:80])
-                return {}
-        return {}
+                return None
+        return None
 
     def _price(c):
         return _retrying(lambda x: _dc().batch_price(x, region=region, currency=currency),
@@ -244,30 +248,57 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         prices: dict[int, dict] = {}
         prices_hk: dict[int, dict] = {}
         sales: dict[int, dict] = {}
-        with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
-            for r in ex.map(_price, chunks):
-                prices.update(r)
-        if fetch_hk:
+        failed_ids: set[int] = set()      # 任一接口彻底失败的 skuId，所属货号本轮不落库
+
+        def _collect(fn, into: dict) -> None:
             with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
-                for r in ex.map(_price_hk, chunks):
-                    prices_hk.update(r)
-        with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
-            for r in ex.map(_sales, chunks):
-                sales.update(r)
+                for chunk, r in zip(chunks, ex.map(fn, chunks)):
+                    if r is None:
+                        failed_ids.update(chunk)
+                    else:
+                        into.update(r)
+
+        _collect(_price, prices)
+        if fetch_hk:
+            _collect(_price_hk, prices_hk)
+        _collect(_sales, sales)
+
+        # 不查 HKD 时也不能丢掉上一轮存下的香港报价：save_quotes 是 $set 整个
+        # sizes 数组，行里没写的字段就没了。按 globalSkuId 把旧值合并回来。
+        old_hk: dict[str, dict] = {}
+        if not fetch_hk:
+            for d in dao.quotes.find({"sku": {"$in": group}},
+                                     {"sku": 1, "hk_fetched_at": 1, "sizes.globalSkuId": 1,
+                                      "sizes.hkMinPrice": 1, "sizes.hkLeakPrice": 1}):
+                old_hk[d["sku"]] = {
+                    "at": d.get("hk_fetched_at"),
+                    "sizes": {z.get("globalSkuId"): z for z in d.get("sizes", [])
+                              if z.get("hkMinPrice") is not None},
+                }
 
         batch: list[tuple[str, dict]] = []
+        skipped = 0
         for sku in group:
             info = catalogs[sku]
+            gids = [s.get("globalSkuId") for s in info.get("skus", [])]
+            if any(g in failed_ids for g in gids):
+                # 请求失败 ≠ 无报价：保留库里原有报价和时间戳，下轮重试
+                skipped += 1
+                continue
             sizes = []
             for s in info.get("skus", []):
                 gid = s.get("globalSkuId")
                 row = {"size": s.get("size"), "globalSkuId": gid,
                        **prices.get(gid, {}), **sales.get(gid, {})}
                 if fetch_hk:
-                    # 只在真查了的时候才写，否则会用 None 覆盖掉上一轮存下的值
                     hk = prices_hk.get(gid) or {}
                     row["hkMinPrice"] = hk.get("globalMinPrice")
                     row["hkLeakPrice"] = hk.get("leakPrice")
+                else:
+                    prev = old_hk.get(sku, {}).get("sizes", {}).get(gid)
+                    if prev:
+                        row["hkMinPrice"] = prev.get("hkMinPrice")
+                        row["hkLeakPrice"] = prev.get("hkLeakPrice")
                 sizes.append(row)
             payload = {k: v for k, v in info.items()
                        if k not in ("skus", "_id", "fetched_at")}
@@ -276,14 +307,21 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                 "country": region, "sizes": sizes,
                 "totalSoldNum30": sum(x.get("globalSoldNum30") or 0 for x in sizes),
             })
+            # 香港报价有自己的抓取时间，不跟着国内口径的 fetched_at 走
+            hk_at = datetime.utcnow() if fetch_hk else old_hk.get(sku, {}).get("at")
+            if hk_at is not None:
+                payload["hk_fetched_at"] = hk_at
             batch.append((sku, payload))
             dewu_size_pairs.extend((z.get("size"), sku) for z in sizes if z.get("size"))
         # 整组一次写完。逐条 update_one 对 Atlas 是每条一个往返，200 条要 52 秒。
         dao.save_quotes(batch)
         saved += len(batch)
+        errors += skipped
         extra = ""
+        if skipped:
+            extra = f"（{skipped} 个货号请求失败，保留旧报价）"
         if retry_stat["rate_limited"] or retry_stat["gave_up"]:
-            extra = (f"（限流重试 {retry_stat['rate_limited']} 次，"
+            extra += (f"（限流重试 {retry_stat['rate_limited']} 次，"
                      f"累计退避 {retry_stat['slept']:.0f}s，放弃 {retry_stat['gave_up']} 次）")
             retry_stat.update(rate_limited=0, slept=0.0, gave_up=0)
         # 说明「已完成」而不是「已落库」：这一组的耗时绝大部分花在查得物接口
@@ -340,6 +378,16 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
     report(f"汇率：USD→CNY {rates['usd_cny']}，HKD→CNY "
            f"{rates['usd_cny'] / rates['usd_hkd']:.4f}（{rates['source']}）")
 
+    # 返现门户与销售税是美国站特有的（Rakuten/RetailMeNot、州销售税），
+    # 套在日韩英加的采购上会让那些行的利润系统性偏高。
+    # 按站点取一份配置：非美国站清零这两项，其余照旧。
+    site_cfgs = {"us": cfg}
+    for s in picked:
+        if s != "us":
+            site_cfgs[s] = {**cfg, "purchase": {**cfg["purchase"],
+                                                "cashback_portal": 0.0,
+                                                "sales_tax": 0.0}}
+
     products: dict[str, dict] = {}
     for d in conn.db["products"].find(
             {"site": {"$in": picked}},
@@ -353,12 +401,17 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
         d["_usd"] = to_usd(local, cur, rates)
         d["_list_usd"] = round(to_usd(d["orig_price"], cur, rates), 2) if d.get("orig_price") else None
         d["_site"] = d.get("site", "us")
-        # 同一货号多个站都有时，留采购成本最低的那个 —— 比价本来就该挑最便宜的进货地
+        # 同一货号多个站都有时，留采购成本最低的那个 —— 比价本来就该挑最便宜的进货地。
+        # 「最低」按各站算完促销码、返现、销售税之后的实付成本比，不是按标价：
+        # 美国标价 100 再打七折，实付 70 比另一站折美元 80 的更便宜，按标价会选错。
+        d["_cost_usd"] = purchase_cost_usd(
+            d["_usd"], site_cfgs[d["_site"]],
+            promo_rate=d.get("promo_rate"), promo_code=d.get("promo_code"))["cost_usd"]
         cur_best = products.get(d["sku"])
-        if cur_best is None or d["_usd"] < cur_best["_usd"]:
+        if cur_best is None or d["_cost_usd"] < cur_best["_cost_usd"]:
             products[d["sku"]] = d
     report(f"候选商品 {len(products)} 个货号（站点 {','.join(picked)}，"
-           f"同货号取最低价站点）")
+           f"同货号取实付成本最低的站点）")
 
     rows: list[dict] = []
     considered = 0
@@ -368,15 +421,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
         if not p:
             continue
         usd = p["_usd"]
-
-        # 返现门户与销售税是美国站特有的（Rakuten/RetailMeNot、州销售税），
-        # 套在日韩英加的采购上会让那些行的利润系统性偏高。
-        # 按站点取一份配置：非美国站清零这两项，其余照旧。
-        site_cfg = cfg
-        if p["_site"] != "us":
-            site_cfg = {**cfg, "purchase": {**cfg["purchase"],
-                                            "cashback_portal": 0.0,
-                                            "sales_tax": 0.0}}
+        site_cfg = site_cfgs[p["_site"]]
 
         for size in quote.get("sizes", []):
             price = size.get("globalMinPrice")

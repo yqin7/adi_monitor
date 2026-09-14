@@ -307,6 +307,7 @@ const CFG = {
   ca: {cur:'C$', fxKey:'cad_cny', fxLabel:'汇率 CAD→CNY', rmn:false, step:'0.0001'},
 };
 /* 单品级覆盖：{ sku: {promo: 0.7, ship: 3.5} }，存 localStorage，刷新不丢 */
+let RAW_TRUNC = 0;
 let OVERRIDES = {};
 try { OVERRIDES = JSON.parse(localStorage.getItem('dewu_overrides') || '{}'); } catch (e) {}
 const saveOv = () => { try { localStorage.setItem('dewu_overrides', JSON.stringify(OVERRIDES)); } catch (e) {} };
@@ -480,7 +481,9 @@ function render() {
     ['符合条件', rows.length], ['其中净利为正', pos.length],
     ['最高净利 ¥', Math.round(best)],
     ['数据总量', RAW.length],
-  ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`).join('');
+  ].map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v">${fmt(v)}</div></div>`).join('')
+  + (RAW_TRUNC ? `<div class="stat"><div class="k" style="color:#c00">服务端截断</div>`
+      + `<div class="v" style="color:#c00">仅取 ${fmt(RAW.length)}/${fmt(RAW_TRUNC)}</div></div>` : '');
 
   $('#empty').hidden = rows.length > 0;
   lastRows = rows;
@@ -600,6 +603,7 @@ async function loadData() {
     // 服务端把商品信息按货号存一份（name/url 原本随每个尺码重复），这里摊平回扁平结构
     const P = d.products || {};
     RAW = (d.items || []).map(r => ({...(P[r.sku] || {}), ...r}));
+    RAW_TRUNC = d.truncated ? d.total : 0;   // 超过服务端上限时提示，别静默少一截
     FEES = d.sell_cn_fees;
     fillCategories();
     render();
