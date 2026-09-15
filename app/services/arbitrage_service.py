@@ -383,6 +383,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
     # 有报价的货号里只有 970 个拿到美国站记录，其余 5,215 个算出天价成本后
     # 被 passes_filter 静默丢弃 —— arbitrage 表长期只有一百多条就是这么来的。
     from app.core.fx import SITE_CURRENCY, get_rates, to_usd
+    from app.dao.product_dao import is_delisted, site_latest_scan
 
     picked = [x for x in (sites or list(SITE_CURRENCY)) if x in SITE_CURRENCY]
     rates = get_rates()
@@ -405,6 +406,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
                                                 "cashback_portal": 0.0,
                                                 "sales_tax": 0.0}}
 
+    latest_by_site = {s: site_latest_scan(conn.db["products"], s) for s in picked}
     products: dict[str, dict] = {}
     for d in conn.db["products"].find(
             {"site": {"$in": picked}},
@@ -424,7 +426,9 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
         d["_cost_usd"] = purchase_cost_usd(
             d["_usd"], site_cfgs[d["_site"]],
             promo_rate=d.get("promo_rate"), promo_code=d.get("promo_code"))["cost_usd"]
-        # 售罄的站买不到，再便宜也排在有货的站后面
+        # 售罄或已不在架的站买不到，再便宜也排在有货的站后面
+        if is_delisted(d, latest_by_site.get(d["_site"])):
+            d["is_sold_out"] = True
         d["_rank"] = (bool(d.get("is_sold_out")), d["_cost_usd"])
         cur_best = products.get(d["sku"])
         if cur_best is None or d["_rank"] < cur_best["_rank"]:

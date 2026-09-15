@@ -111,3 +111,14 @@ def test_build_ops_same_product_twice_in_one_batch_compares_with_previous_push()
                ("A", "us", {"sku": "A", "site": "us"}, _e("b1", 70))]
     _, _, pushed = dao._build_ops(pending, datetime(2026, 9, 15), "b1", _Op)
     assert pushed == 2
+
+
+def test_is_delisted_uses_site_latest_scan_with_grace():
+    from datetime import timedelta
+    from app.dao.product_dao import is_delisted, DELISTED_AFTER
+    latest = datetime(2026, 9, 15, 3, 13)
+    assert is_delisted({"updated_at": datetime(2026, 9, 8, 2, 48)}, latest)          # 7 天没见到
+    assert not is_delisted({"updated_at": latest - timedelta(hours=1)}, latest)      # 同一轮
+    assert not is_delisted({"updated_at": latest - DELISTED_AFTER + timedelta(minutes=1)}, latest)
+    assert not is_delisted({"updated_at": None}, latest) and not is_delisted({"updated_at": latest}, None)
+    assert is_delisted({"updated_at": datetime(2026, 9, 8, tzinfo=timezone.utc)}, latest)  # aware 也行

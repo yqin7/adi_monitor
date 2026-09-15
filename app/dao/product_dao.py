@@ -1,10 +1,31 @@
 """products 集合的持久化（价格历史内嵌为 products.price_list 数组）"""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 WRITE_BATCH_SIZE = 5000
+# 一件商品的 updated_at 比本站最近一次扫描落后超过这个时长，就视为「未在架」：
+# 抓取只更新列表页上看到的商品，下架/售罄后不再展示的会永远停在最后一次状态。
+# 留 12 小时余量，是给分类扫描与全站扫描之间的时间差。
+DELISTED_AFTER = timedelta(hours=12)
+
+
+def site_latest_scan(collection, site: str) -> datetime | None:
+    d = collection.find_one({"site": site}, {"updated_at": 1}, sort=[("updated_at", -1)])
+    return d.get("updated_at") if d else None
+
+
+def _naive_utc(t: datetime) -> datetime:
+    return t.astimezone(timezone.utc).replace(tzinfo=None) if t.tzinfo else t
+
+
+def is_delisted(doc: dict[str, Any], site_latest: datetime | None) -> bool:
+    """本站最近一轮扫描没见到它（见 DELISTED_AFTER）。"""
+    t = doc.get("updated_at")
+    if site_latest is None or t is None:
+        return False
+    return _naive_utc(t) < _naive_utc(site_latest) - DELISTED_AFTER
 
 
 class ProductDAO:

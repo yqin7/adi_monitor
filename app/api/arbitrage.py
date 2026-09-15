@@ -309,6 +309,9 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
          "currency": 1, "available_sizes": 1,
          "updated_at": 1, "scraped_at": 1, "sizes_updated_at": 1})}
 
+    from app.dao.product_dao import is_delisted, site_latest_scan
+    site_latest = site_latest_scan(db["products"], site)
+
     out_prods: dict[str, dict] = {}
     rows: list[dict] = []
     total = 0
@@ -316,6 +319,7 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
         p = products.get(q["sku"])
         if not p:
             continue
+        delisted = is_delisted(p, site_latest)
         usd = p.get("sale_price") or p.get("orig_price")
         if not usd:
             continue
@@ -326,6 +330,8 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
                 "name": p.get("name"), "category": p.get("category"),
                 "dewu_category": q.get("category"),   # 操作费分档按得物类目
                 "url": p.get("url"), "is_sold_out": p.get("is_sold_out", False),
+                # 最近一轮本站扫描没见到它：库里的价格/尺码是下架前的旧状态
+                "delisted": delisted,
                 "currency": p.get("currency", "USD"),
                 "list_usd": p.get("orig_price"), "price_usd": usd,
                 "promo_code": p.get("promo_code"), "promo_rate": p.get("promo_rate"),
@@ -346,7 +352,7 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
             rows.append({
                 "sku": sku, "size": sz.get("size"),
                 # 该尺码 Adidas 侧是否有货：True/False，拿不到尺码时为 None（未知）
-                "in_stock": in_stock(sz.get("size"), p.get("available_sizes")),
+                "in_stock": None if delisted else in_stock(sz.get("size"), p.get("available_sizes")),
                 # 得物接口返回的就是【香港报价】，结算单位人民币(RMB)。
                 # 国内报价 = 香港报价 × 1.09（电商税），由前端换算。
                 "dewu_price": price,

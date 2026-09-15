@@ -38,12 +38,17 @@ def _iso(dt) -> str | None:
 def _one(db, sku: str, live: bool) -> dict[str, Any]:
     from app.core.sizing import in_stock
 
+    from app.dao.product_dao import is_delisted, site_latest_scan
+
     rows = list(db["products"].find({"sku": sku}, {"_id": 0}))
     sites: list[dict] = []
     for d in sorted(rows, key=lambda x: SITE_ORDER.index(x.get("site", "us"))
                     if x.get("site") in SITE_ORDER else 99):
         site = d.get("site", "us")
+        # 最近一轮本站扫描没见到它 -> 下架/售罄，库里的尺码是旧状态
+        delisted = is_delisted(d, site_latest_scan(db["products"], site))
         sites.append({
+            "delisted": delisted,
             "site": site, "site_cn": SITE_LABEL.get(site, site),
             "name": d.get("name"), "category": d.get("category"),
             "url": d.get("url"), "currency": d.get("currency"),
@@ -89,7 +94,7 @@ def _one(db, sku: str, live: bool) -> dict[str, Any]:
         avail = {}
         for x in sites:
             st = in_stock(size, x["available_sizes"]) if x["available_sizes"] else None
-            avail[x["site"]] = st
+            avail[x["site"]] = None if x["delisted"] else st
         matrix.append({
             "size": size,
             "dewu_price": s.get("globalMinPrice"),      # 香港报价，人民币结算
