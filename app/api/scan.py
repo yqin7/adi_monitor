@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 from typing import List, Optional
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 
 from app import state
 from app.models.schemas import JobQueuedResponse, JobResponse, ScanRequest, FullScanRequest
@@ -22,12 +22,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Scan"])
 
 
+def _start_exclusive(name: str, label: str, fn) -> None:
+    """扫描任务与 /jobs 共用 job_runner 的互斥锁。
+
+    原来直接丢 BackgroundTasks：两个全量扫描（或与 /jobs/run/adidas）并发时
+    各自读到同一条 price_list 末尾，都判定「价格变了」各 $push 一次，
+    变化点就重复；写 products 的 $set 也互相覆盖。同一时刻只跑一个。
+    """
+    from app.services import job_runner
+
+    ok, msg = job_runner.start(name, label, lambda job: fn())
+    if not ok:
+        raise HTTPException(409, msg)
+
+
 @router.post(
     "/scan",
     summary="扫描监控列表（触发变化检测 + Slack 通知）",
     response_model=JobQueuedResponse,
 )
-async def trigger_scan(background_tasks: BackgroundTasks, req: ScanRequest = ScanRequest()):
+async def trigger_scan(req: ScanRequest = ScanRequest()):
     """
     扫描指定 SKU（或当前监控列表中的全部 SKU），检测库存变化并对匹配监控项发送 Slack 通知。
 
@@ -48,7 +62,7 @@ async def trigger_scan(background_tasks: BackgroundTasks, req: ScanRequest = Sca
             )
 
     job_id = state.job_service.create_job(JOB_TYPE_WATCH_SCAN)
-    background_tasks.add_task(_run_watch_scan_job, job_id, skus)
+    _start_exclusive("watch-scan", "监控列表扫描", lambda: _run_watch_scan_job(job_id, skus))
 
     return JobQueuedResponse(
         job_id=job_id,
@@ -94,7 +108,7 @@ def _run_watch_scan_job(job_id: str, skus: List[str]):
     summary="立即触发全量扫描（仅价格，不抓尺码库存，速度快）",
     response_model=JobQueuedResponse,
 )
-async def trigger_full_scan(background_tasks: BackgroundTasks, req: FullScanRequest = FullScanRequest()):
+async def trigger_full_scan(req: FullScanRequest = FullScanRequest()):
     """
     爬取全站分类页（PLP）发现所有 SKU 及价格，写入 MongoDB（含价格历史）。
 
@@ -102,9 +116,8 @@ async def trigger_full_scan(background_tasks: BackgroundTasks, req: FullScanRequ
     如需同时获取尺码库存，请使用 `/scan/full-with-sizes`（耗时更长，10-20 分钟级别）。
     """
     job_id = state.job_service.create_job(JOB_TYPE_FULL_SCAN)
-    background_tasks.add_task(
-        _run_full_scan_job, job_id, False, req.category, req.plp_workers
-    )
+    _start_exclusive("scan-full", "全量扫描（仅价格）",
+                     lambda: _run_full_scan_job(job_id, False, req.category, req.plp_workers))
     return JobQueuedResponse(
         job_id=job_id,
         status=STATUS_QUEUED,
@@ -117,9 +130,7 @@ async def trigger_full_scan(background_tasks: BackgroundTasks, req: FullScanRequ
     summary="立即触发全量扫描（含尺码库存，耗时较长）",
     response_model=JobQueuedResponse,
 )
-async def trigger_full_scan_with_sizes(
-    background_tasks: BackgroundTasks, req: FullScanRequest = FullScanRequest()
-):
+async def trigger_full_scan_with_sizes(req: FullScanRequest = FullScanRequest()):
     """
     爬取全站分类页（PLP）发现所有 SKU 及价格，并为每个 SKU 补充尺码库存，全部写入 MongoDB。
 
@@ -127,9 +138,8 @@ async def trigger_full_scan_with_sizes(
     10,000-20,000 个 SKU 预计耗时 10-20 分钟。
     """
     job_id = state.job_service.create_job(JOB_TYPE_FULL_SCAN_WITH_SIZES)
-    background_tasks.add_task(
-        _run_full_scan_job, job_id, True, req.category, req.plp_workers
-    )
+    _start_exclusive("scan-full-sizes", "全量扫描（含尺码）",
+                     lambda: _run_full_scan_job(job_id, True, req.category, req.plp_workers))
     return JobQueuedResponse(
         job_id=job_id,
         status=STATUS_QUEUED,
