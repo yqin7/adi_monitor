@@ -6,6 +6,8 @@ last_price_observed_at 缺失的商品，用原数组最后一条的 observed_at
 这样「最后一段价格持续到什么时候」不会因为折叠而丢失。
 
 不删表、不改字段，只把数组变短；可重复执行（已折叠的商品不会再变）。
+写回时以数组当前长度作条件（$size），扫描任务若恰好在读写之间 $push 了新点，
+这条会写不上、留到下次再折，不会把新变化点抹掉。
 
 用法：
     python script/compact_price_list.py --dry-run
@@ -75,19 +77,22 @@ def main() -> int:
             upd: dict = {"price_list": new}
             if d.get("last_price_observed_at") is None:
                 upd["last_price_observed_at"] = pl[-1].get("observed_at")
-            ops.append(UpdateOne({"_id": d["_id"]}, {"$set": upd}))
+            ops.append(UpdateOne({"_id": d["_id"], "price_list": {"$size": len(pl)}},
+                                 {"$set": upd}))
         if len(ops) >= BATCH:
             flush()
             print(f"  已处理 {scanned}/{total_docs}，写入 {written}", flush=True)
     flush()
 
     saved = before - after
+    pct = f"{saved / before * 100:.0f}%" if before else "0%"
     print(f"扫描 {scanned} 件商品，需折叠 {changed} 件")
-    print(f"价格记录 {before} -> {after}（去掉 {saved} 条，{saved / before * 100:.0f}%）")
+    print(f"价格记录 {before} -> {after}（去掉 {saved} 条，{pct}）")
     if args.dry_run:
         print("dry-run，未写库")
     else:
-        print(f"已写入 {written} 件商品")
+        print(f"已写入 {written} 件商品"
+              + (f"（{changed - written} 件因扫描并发写入未命中，重跑即可）" if changed > written else ""))
     return 0
 
 

@@ -255,25 +255,27 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         prices: dict[int, dict] = {}
         prices_hk: dict[int, dict] = {}
         sales: dict[int, dict] = {}
-        failed_ids: set[int] = set()      # 任一接口彻底失败的 skuId，所属货号本轮不落库
+        failed_ids: set[int] = set()      # 价格/销量彻底失败的 skuId，所属货号本轮不落库
+        failed_hk: set[int] = set()       # 仅 HK 口径失败：CN 价照常写，HK 沿用旧值
 
-        def _collect(fn, into: dict) -> None:
+        def _collect(fn, into: dict, failed: set) -> None:
             with ThreadPoolExecutor(QUOTE_WORKERS) as ex:
                 for chunk, r in zip(chunks, ex.map(fn, chunks)):
                     if r is None:
-                        failed_ids.update(chunk)
+                        failed.update(chunk)
                     else:
                         into.update(r)
 
-        _collect(_price, prices)
+        _collect(_price, prices, failed_ids)
         if fetch_hk:
-            _collect(_price_hk, prices_hk)
-        _collect(_sales, sales)
+            _collect(_price_hk, prices_hk, failed_hk)
+        _collect(_sales, sales, failed_ids)
 
         # 不查 HKD 时也不能丢掉上一轮存下的香港报价：save_quotes 是 $set 整个
         # sizes 数组，行里没写的字段就没了。按 globalSkuId 把旧值合并回来。
+        # 开了 HKD 但某批 HK 请求失败时同样退回旧值，不能因此丢掉刚查到的 CN 价。
         old_hk: dict[str, dict] = {}
-        if not fetch_hk:
+        if not fetch_hk or failed_hk:
             for d in dao.quotes.find({"sku": {"$in": group}},
                                      {"sku": 1, "hk_fetched_at": 1, "sizes.globalSkuId": 1,
                                       "sizes.hkMinPrice": 1, "sizes.hkLeakPrice": 1}):
@@ -297,7 +299,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                 gid = s.get("globalSkuId")
                 row = {"size": s.get("size"), "globalSkuId": gid,
                        **prices.get(gid, {}), **sales.get(gid, {})}
-                if fetch_hk:
+                if fetch_hk and gid not in failed_hk:
                     hk = prices_hk.get(gid) or {}
                     row["hkMinPrice"] = hk.get("globalMinPrice")
                     row["hkLeakPrice"] = hk.get("leakPrice")
@@ -315,7 +317,8 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                 "totalSoldNum30": sum(x.get("globalSoldNum30") or 0 for x in sizes),
             })
             # 香港报价有自己的抓取时间，不跟着国内口径的 fetched_at 走
-            hk_at = datetime.utcnow() if fetch_hk else old_hk.get(sku, {}).get("at")
+            hk_ok = fetch_hk and not any(g in failed_hk for g in gids)
+            hk_at = datetime.utcnow() if hk_ok else old_hk.get(sku, {}).get("at")
             if hk_at is not None:
                 payload["hk_fetched_at"] = hk_at
             batch.append((sku, payload))
@@ -415,8 +418,10 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
         d["_cost_usd"] = purchase_cost_usd(
             d["_usd"], site_cfgs[d["_site"]],
             promo_rate=d.get("promo_rate"), promo_code=d.get("promo_code"))["cost_usd"]
+        # 售罄的站买不到，再便宜也排在有货的站后面
+        d["_rank"] = (bool(d.get("is_sold_out")), d["_cost_usd"])
         cur_best = products.get(d["sku"])
-        if cur_best is None or d["_cost_usd"] < cur_best["_cost_usd"]:
+        if cur_best is None or d["_rank"] < cur_best["_rank"]:
             products[d["sku"]] = d
     report(f"候选商品 {len(products)} 个货号（站点 {','.join(picked)}，"
            f"同货号取实付成本最低的站点）")
@@ -439,7 +444,7 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
             sales = size.get("globalSoldNum30")
             res = evaluate(usd, price, site_cfg, market=market,
                            promo_rate=p.get("promo_rate"), promo_code=p.get("promo_code"),
-                           category=p.get("category"))
+                           category=quote.get("category") or p.get("category"))
             if apply_filter and not passes_filter(res, sales, cfg):
                 continue
             rows.append({

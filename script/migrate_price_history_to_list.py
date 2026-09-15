@@ -1,5 +1,10 @@
 """一次性脚本：把 price_history 集合迁移进 products.price_list 数组。
 
+【已执行完毕，2026-09-14】price_history 集合已删除，本脚本保留仅作记录。
+注意：2026-09-15 起 price_list 只存价格变化点（见 compact_price_list.py），
+若拿备份重新导入再跑本脚本，合并会把被折叠掉的重复记录加回来，
+之后需要再跑一次 compact_price_list.py。
+
 背景：
     价格历史原来存在独立的 price_history 集合，一次查询/建趋势图都要单独
     连表。改成内嵌在 products.price_list 里后，读当前价格只需取数组最后
@@ -124,7 +129,9 @@ def main() -> int:
             if key not in existing:
                 continue
             merged = merge(existing[key], [build_entry(d) for d in grouped[key]])
-            ops.append(UpdateOne({"sku": key[0], "site": key[1]},
+            # 以读到时的数组长度作条件，避免覆盖扫描任务同时 $push 的记录
+            ops.append(UpdateOne({"sku": key[0], "site": key[1],
+                                  "price_list": {"$size": len(existing[key])}},
                                  {"$set": {"price_list": merged}}))
         if ops:
             res = prod.bulk_write(ops, ordered=False)

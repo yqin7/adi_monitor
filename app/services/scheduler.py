@@ -109,7 +109,8 @@ def start() -> None:
 
     sched.start()
     _scheduler = sched
-    logger.info("定时调度已启动：Adidas「%s」站点 %s；得物「%s」只查 >%s 天；抖动 ±%ss",
+    logger.info("定时调度已启动：Adidas「%s」站点 %s（得物报价也只查这些站的货号）；"
+                "得物「%s」只查 >%s 天；抖动 ±%ss",
                 adidas_cron, ",".join(_sites()), dewu_cron, age, jitter)
 
 

@@ -76,8 +76,17 @@ def purchase_cost_usd(list_price_usd: float, cfg: Dict[str, Any],
 # ---------------------------------------------------------------- 得物到手价
 
 def is_apparel(category: str | None) -> bool:
-    """men/women/kids-clothing 算服装；鞋、配件、sale 都不算。"""
-    return bool(category) and str(category).lower().endswith("clothing")
+    """是否按服装收操作费。
+
+    操作费是得物的费用，优先用得物自己的类目（Apparel / Women's Apparel）；
+    没有得物类目时退回 Adidas 抓取分类（*-clothing）。两套分类约 15% 不一致
+    （Adidas 的 accessories 在得物是 Underwear，clothing 在得物可能是 Bags）。
+    注意 "…Apparel Accessories" 以 Accessories 结尾，不算。
+    """
+    if not category:
+        return False
+    c = str(category).strip()
+    return c.endswith("Apparel") or c.lower().endswith("clothing")
 
 
 def operate_fee_cn(sale_base_cny: float, cfg: Dict[str, Any],

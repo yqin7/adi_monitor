@@ -25,6 +25,7 @@ FALLBACK_USD = {"CNY": 7.12, "HKD": 7.80, "KRW": 1380.0,
 _CACHE: dict[str, Any] = {}
 _TTL = 900          # 15 分钟：汇率日内波动对利润的影响远小于这个精度
 _RETRY_AFTER = 60   # 实时源失败后多久再试
+_MAX_STALE = 86400  # 旧实时值最多沿用 24h，再久就宁可用兜底并明确标记
 
 
 def _fetch() -> dict[str, float] | None:
@@ -60,11 +61,13 @@ def get_rates(force: bool = False) -> dict[str, Any]:
         return _CACHE["data"]
 
     raw = _fetch()
-    if raw is None and _CACHE.get("data", {}).get("live"):
+    fetched_at = _CACHE.get("_fetched_at", 0)
+    if raw is None and _CACHE.get("data", {}).get("live") and now - fetched_at < _MAX_STALE:
         # 一次瞬时超时不该让 compute() 用 7.12 算完整表再覆盖上一轮正确结果：
         # 有过实时值就继续用旧的（过期几分钟的汇率远比兜底常数准），
         # 只把重试时间推后一小段，避免每次调用都打一遍外部源。
         _CACHE["_at"] = now - _TTL + _RETRY_AFTER
+        _CACHE["data"]["stale_seconds"] = int(now - fetched_at)
         return _CACHE["data"]
     live = raw is not None
     usd = {k: v for k, v in (raw or {}).items() if not k.startswith("_")} or dict(FALLBACK_USD)
@@ -76,6 +79,7 @@ def get_rates(force: bool = False) -> dict[str, Any]:
         "updated": (raw or {}).get("_updated", ""),
         "usd_cny": round(cny, 6),
         "usd_hkd": round(usd.get("HKD") or FALLBACK_USD["HKD"], 6),
+        "stale_seconds": 0,
     }
     # 各站本币 -> 人民币；以及 usd_<币种> 便于反查
     for cur in ("USD", "KRW", "JPY", "GBP", "CAD", "EUR", "HKD"):
@@ -90,6 +94,8 @@ def get_rates(force: bool = False) -> dict[str, Any]:
 
     # 兜底值只短暂缓存：下一次调用就重试实时源，别让常数汇率顶满 15 分钟
     _CACHE.update(_at=now if live else now - _TTL + _RETRY_AFTER, data=out)
+    if live:
+        _CACHE["_fetched_at"] = now
     return out
 
 

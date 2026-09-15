@@ -282,7 +282,8 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
                             headers={"X-Cache": "HIT"})
 
     # 只取用到的字段：整份 quote 有 14 个尺码字段，前端只用 5 个
-    proj = {"sku": 1, "fetched_at": 1, "sizes.size": 1, "sizes.globalMinPrice": 1,
+    proj = {"sku": 1, "fetched_at": 1, "category": 1,
+            "sizes.size": 1, "sizes.globalMinPrice": 1,
             "sizes.hkMinPrice": 1,
             "sizes.globalSoldNum30": 1, "sizes.globalMonthToMonthRatio": 1,
             "sizes.globalSkuId": 1}
@@ -312,6 +313,7 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
         if sku not in out_prods:
             out_prods[sku] = {
                 "name": p.get("name"), "category": p.get("category"),
+                "dewu_category": q.get("category"),   # 操作费分档按得物类目
                 "url": p.get("url"), "is_sold_out": p.get("is_sold_out", False),
                 "currency": p.get("currency", "USD"),
                 "list_usd": p.get("orig_price"), "price_usd": usd,

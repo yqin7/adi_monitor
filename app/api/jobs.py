@@ -171,7 +171,12 @@ def run(name: str,
             False, description="额外查 HKD 口径价格用于复核换算系数；价格调用翻倍")):
     if name not in JOBS:
         raise HTTPException(404, f"未知任务 {name}")
-    picked = [s.strip() for s in sites.split(",") if s.strip() in ALL_SITES] or ALL_SITES
+    wanted = [s.strip() for s in sites.split(",") if s.strip()]
+    unknown = [s for s in wanted if s not in ALL_SITES]
+    if unknown:
+        # 悄悄退回全部站点会让 dewu 任务把整份额度花掉
+        raise HTTPException(400, f"未知站点 {','.join(unknown)}，可选 {'/'.join(ALL_SITES)}")
+    picked = wanted or ALL_SITES
     ok, msg = job_runner.start(name, JOBS[name],
                                _make(name, picked, limit, market, max_quote_age_days,
                                      fetch_hk))

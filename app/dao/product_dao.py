@@ -156,6 +156,11 @@ class ProductDAO:
 
         ops, keys, pushed = [], [], 0
         for sku, site, document, entry in pending:
+            # 调用方可能把整条库里的文档原样传回来（fetch_sizes.py 就是）：
+            # created_at 与 $setOnInsert 冲突会让整批报错（code 40），
+            # price_list 被 $set 会把并发 $push 的变化点整段覆盖掉。
+            for k in ("_id", "created_at", "first_seen_batch", "price_list"):
+                document.pop(k, None)
             # $setOnInsert 只在首次插入时写，之后每轮扫描都不会覆盖 ——
             # 这是「这件商品第一次出现在官网」的唯一凭据，新品检测全靠它。
             update: dict[str, Any] = {

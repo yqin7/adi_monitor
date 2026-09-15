@@ -363,7 +363,7 @@ const lim = id => { const v = $('#' + id).value.trim(); return v === '' ? null :
 const fmt = (v, d = 0) => v == null || isNaN(v) ? '—'
   : Number(v).toLocaleString('zh-CN', {minimumFractionDigits: d, maximumFractionDigits: d});
 
-const isApparel = c => !!c && String(c).toLowerCase().endsWith('clothing');
+const isApparel = c => !!c && (String(c).endsWith('Apparel') || String(c).toLowerCase().endsWith('clothing'));
 function operateFeeCn(salePrice, f, category) {
   const tiers = f.operate_fee_apparel;
   if (!isApparel(category) || !tiers || !tiers.length) return f.operate_fee;
@@ -403,7 +403,7 @@ function calc(r) {
                      after_sale_rate:0.025, operate_fee:38, postage_subsidy:10,
                      operate_fee_apparel:[{min:400,fee:38},{min:300,fee:28},{min:0,fee:18}]};
   const cnPrice = cnBase * (1 + f.tax_rate);
-  const operateFee = operateFeeCn(cnPrice, f, r.category);
+  const operateFee = operateFeeCn(cnPrice, f, r.dewu_category || r.category);
   const payoutCn = cnPrice * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)
                    - operateFee - f.postage_subsidy;
 
@@ -818,7 +818,7 @@ $('#rows').addEventListener('click', e => {
 
 /* ── 任务状态（面板已独立到 /ui/tasks，这里只留一个轻量指示灯）──────
    作用有二：告诉你现在有任务在跑，以及任务跑完后自动刷新表格。 */
-let jobTimer = null, lastJobStatus = null;
+let jobTimer = null, lastJobStatus = null, lastJobStart = null;
 /* 空闲时也不能停：任务可能从 /ui/tasks 那页启动，这页停了就永远不刷新、CACHE 一直是旧数据。
    只是把频率放慢，运行中 3s、空闲 15s。 */
 const POLL_RUN = 3000, POLL_IDLE = 15000;
@@ -838,6 +838,7 @@ async function pollJob() {
   const el = $('#jobBadge');
   if (d.idle) {
     el.hidden = true;
+    lastJobStart = lastJobStart ?? '';   // 见过空闲态后，之后任何已完成任务都算「新的」
     setPollRate(POLL_IDLE);
     return;
   }
@@ -851,7 +852,10 @@ async function pollJob() {
   if (!running) {
     // 任务已结束。只有「本页看着它跑完」才值得提示一下并刷新数据；
     // 否则（比如刚打开页面，看到的是几小时前那次的残留状态）直接不显示。
-    if (lastJobStatus === 'running') {
+    // 15s 空闲轮询期间起了又跑完的短任务，本页从没见它 running；
+    // 用 started_at 判断「这是没见过的新任务」，一样要刷新数据。
+    const unseen = d.started_at && lastJobStart !== null && d.started_at !== lastJobStart;
+    if (lastJobStatus === 'running' || unseen) {
       el.hidden = false;
       el.className = 'jobbadge' + (d.status === 'failed' ? ' err' : '');
       el.textContent = d.label + ' · ' + label;
@@ -862,6 +866,7 @@ async function pollJob() {
     }
     setPollRate(POLL_IDLE);
     lastJobStatus = d.status;
+    lastJobStart = d.started_at || null;
     return;
   }
 
@@ -871,6 +876,7 @@ async function pollJob() {
   el.className = 'jobbadge run';
   el.textContent = '● ' + d.label + ' · ' + label + ' · ' + mm + ':' + ss;
   lastJobStatus = d.status;
+  lastJobStart = d.started_at || null;
   setPollRate(POLL_RUN);
 }
 
