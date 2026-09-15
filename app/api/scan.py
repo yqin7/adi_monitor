@@ -22,6 +22,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Scan"])
 
 
+def _reject_if_busy() -> None:
+    """先看锁再 create_job，否则 409 时 scan_jobs 里会留下一条永远 queued 的记录。"""
+    from app.services import job_runner
+
+    if job_runner.is_busy():
+        raise HTTPException(409, f"已有任务在运行：{job_runner.current().label}")
+
+
 def _start_exclusive(name: str, label: str, fn) -> None:
     """扫描任务与 /jobs 共用 job_runner 的互斥锁。
 
@@ -61,6 +69,7 @@ async def trigger_scan(req: ScanRequest = ScanRequest()):
                 detail="监控列表为空，请先通过 POST /watch 添加要监控的商品，或在请求体中提供 skus 列表",
             )
 
+    _reject_if_busy()
     job_id = state.job_service.create_job(JOB_TYPE_WATCH_SCAN)
     _start_exclusive("watch-scan", "监控列表扫描", lambda: _run_watch_scan_job(job_id, skus))
 
@@ -101,6 +110,7 @@ def _run_watch_scan_job(job_id: str, skus: List[str]):
         state.job_service.update_job(
             job_id, status=STATUS_FAILED, error=str(e), finished_at=datetime.utcnow().isoformat()
         )
+        raise   # 让 job_runner 也记成 failed，前端别当成「数据更新了」去刷新
 
 
 @router.post(
@@ -115,6 +125,7 @@ async def trigger_full_scan(req: FullScanRequest = FullScanRequest()):
     不会抓取每个 SKU 的尺码库存，速度较快（几分钟级别）。
     如需同时获取尺码库存，请使用 `/scan/full-with-sizes`（耗时更长，10-20 分钟级别）。
     """
+    _reject_if_busy()
     job_id = state.job_service.create_job(JOB_TYPE_FULL_SCAN)
     _start_exclusive("scan-full", "全量扫描（仅价格）",
                      lambda: _run_full_scan_job(job_id, False, req.category, req.plp_workers))
@@ -137,6 +148,7 @@ async def trigger_full_scan_with_sizes(req: FullScanRequest = FullScanRequest())
     这是最完整的扫描（对应定时任务每 30 分钟执行的内容），
     10,000-20,000 个 SKU 预计耗时 10-20 分钟。
     """
+    _reject_if_busy()
     job_id = state.job_service.create_job(JOB_TYPE_FULL_SCAN_WITH_SIZES)
     _start_exclusive("scan-full-sizes", "全量扫描（含尺码）",
                      lambda: _run_full_scan_job(job_id, True, req.category, req.plp_workers))
@@ -175,6 +187,7 @@ def _run_full_scan_job(job_id: str, include_sizes: bool, category: Optional[str]
         state.job_service.update_job(
             job_id, status=STATUS_FAILED, error=str(e), finished_at=datetime.utcnow().isoformat()
         )
+        raise   # 让 job_runner 也记成 failed，前端别当成「数据更新了」去刷新
 
 
 @router.get(

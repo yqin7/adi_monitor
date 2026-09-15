@@ -42,8 +42,12 @@ def enabled() -> bool:
 
 def _sites() -> list[str]:
     from app.api.jobs import ALL_SITES
-    raw = [s.strip().lower() for s in _env("SCHEDULER_SITES", ",".join(ALL_SITES)).split(",")]
-    return [s for s in raw if s in ALL_SITES] or ALL_SITES
+    raw = [s.strip().lower() for s in _env("SCHEDULER_SITES", ",".join(ALL_SITES)).split(",") if s.strip()]
+    unknown = [s for s in raw if s not in ALL_SITES]
+    if unknown:
+        # 拼错悄悄退回全部站点，得物定时任务会把整份额度花掉；与 /jobs/run 的 400 同一口径
+        raise ValueError(f"SCHEDULER_SITES 含未知站点 {','.join(unknown)}，可选 {'/'.join(ALL_SITES)}")
+    return raw or ALL_SITES
 
 
 def _run(name: str, **kwargs) -> None:
@@ -81,6 +85,11 @@ def start() -> None:
         logger.warning("未安装 apscheduler，定时调度不可用：pip install apscheduler")
         return
 
+    try:
+        sites = _sites()
+    except ValueError as exc:
+        logger.error("定时调度未启动：%s", exc)
+        return
     jitter = int(_env("SCHEDULER_JITTER", "300"))
     age = int(_env("SCHEDULER_QUOTE_AGE_DAYS", "7"))
     sched = BackgroundScheduler(timezone="Asia/Shanghai")
@@ -111,7 +120,7 @@ def start() -> None:
     _scheduler = sched
     logger.info("定时调度已启动：Adidas「%s」站点 %s（得物报价也只查这些站的货号）；"
                 "得物「%s」只查 >%s 天；抖动 ±%ss",
-                adidas_cron, ",".join(_sites()), dewu_cron, age, jitter)
+                adidas_cron, ",".join(sites), dewu_cron, age, jitter)
 
 
 def shutdown() -> None:

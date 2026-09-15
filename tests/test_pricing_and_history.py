@@ -27,9 +27,11 @@ def test_operate_fee_tiers_on_sale_base():
 
 
 def test_payout_cn_uses_tiered_fee_for_apparel_only():
-    quoted = 299 / 1.155                      # 成交价 299 -> 服装 18，其他 38
-    assert payout_cn(quoted, CFG, "Apparel")["operate_fee"] == 18
-    assert payout_cn(quoted, CFG, "men-shoes")["operate_fee"] == 38
+    # 离档位边界远一点，别靠浮点运气：成交价 ≈ 250 -> 18，≈ 350 -> 28，≈ 450 -> 38
+    assert payout_cn(250 / 1.155, CFG, "Apparel")["operate_fee"] == 18
+    assert payout_cn(350 / 1.155, CFG, "Apparel")["operate_fee"] == 28
+    assert payout_cn(450 / 1.155, CFG, "Apparel")["operate_fee"] == 38
+    assert payout_cn(250 / 1.155, CFG, "men-shoes")["operate_fee"] == 38
 
 
 def _e(batch, sale, orig=110, sold=False):
@@ -57,3 +59,55 @@ def test_merge_dedupes_by_batch_and_sorts_mixed_timestamps():
     out = merge([naive, aware], [naive, nodate])
     assert [x["batch_id"] for x in out] == [None, "old", "new"]
     assert merge(out, [naive]) == out
+
+
+class _FakeColl:
+    """只实现 _build_ops 用到的 find(filter, projection)。"""
+    def __init__(self, docs):
+        self.docs = docs
+
+    def find(self, flt, proj):
+        wanted = {(c["sku"], c["site"]) for c in flt["$or"]}
+        for d in self.docs:
+            if (d["sku"], d["site"]) in wanted:
+                pl = d.get("price_list") or []
+                yield {"sku": d["sku"], "site": d["site"], "price_list": pl[-1:]}
+
+
+class _Op:
+    def __init__(self, flt, update, upsert=False):
+        self.flt, self.update = flt, update
+
+
+def _dao_with(docs):
+    dao = ProductDAO.__new__(ProductDAO)
+    dao.collection = _FakeColl(docs)
+    return dao
+
+
+def test_build_ops_pushes_only_on_price_change_and_strips_insert_only_keys():
+    dao = _dao_with([{"sku": "A", "site": "us", "price_list": [_e("old", 55)]}])
+    now = datetime(2026, 9, 15)
+    pending = [
+        ("A", "us", {"sku": "A", "site": "us", "sale_price": 55, "created_at": "stale",
+                     "price_list": ["stale"], "_id": "x", "first_seen_batch": "stale"}, _e("b1", 55)),
+        ("B", "us", {"sku": "B", "site": "us", "sale_price": 10}, _e("b1", 10)),   # 库里没有 -> 新文档要 push
+        ("C", "us", {"sku": "C", "site": "us"}, None),                             # 不记价格历史
+    ]
+    ops, keys, pushed = dao._build_ops(pending, now, "b1", _Op)
+    assert keys == [("A", "us"), ("B", "us"), ("C", "us")] and pushed == 1
+    assert "$push" not in ops[0].update                     # 价格没变
+    assert "$push" in ops[1].update                         # 新商品
+    assert "$push" not in ops[2].update
+    for k in ("_id", "created_at", "first_seen_batch", "price_list"):
+        assert k not in ops[0].update["$set"]
+    assert ops[0].update["$setOnInsert"] == {"created_at": now, "first_seen_batch": "b1"}
+
+
+def test_build_ops_same_product_twice_in_one_batch_compares_with_previous_push():
+    dao = _dao_with([{"sku": "A", "site": "us", "price_list": [_e("old", 55)]}])
+    pending = [("A", "us", {"sku": "A", "site": "us"}, _e("b1", 60)),
+               ("A", "us", {"sku": "A", "site": "us"}, _e("b1", 60)),
+               ("A", "us", {"sku": "A", "site": "us"}, _e("b1", 70))]
+    _, _, pushed = dao._build_ops(pending, datetime(2026, 9, 15), "b1", _Op)
+    assert pushed == 2

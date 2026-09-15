@@ -219,7 +219,13 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                          c, "批量价格")
 
     def _sales(c):
-        return _retrying(lambda x: _dc().batch_sales(x), c, "批量销量")
+        # 接口 159 对每个 skuId 都会返回元数据（哪怕销量为 0）；一个都没回就是接口异常，
+        # 不能当成「无销量」写库把 fetched_at 刷新掉 —— 那会让这批一周内不再重查。
+        r = _retrying(lambda x: _dc().batch_sales(x), c, "批量销量")
+        if r is not None and c and not r:
+            log.warning("批量销量返回空（%d 个 id 无一命中），按失败处理", len(c))
+            return None
+        return r
 
     def _price_hk(c):
         """同一批 skuId 再按 HKD 口径查一次。

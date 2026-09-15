@@ -135,6 +135,10 @@ def main():
         )
 
         batch_id = "size_" + time.strftime("%Y%m%d_%H%M%S")
+        # 只回写尺码相关字段。items 是从库里读出来的整条文档，原样 upsert 会把
+        # 读取那一刻的旧价格/时间戳 $set 回去，与正在跑的扫描互相覆盖。
+        size_fields = ("sku", "site", "sizes", "overall_status", "checked_at", "available_sizes")
+        items = [{k: v for k, v in it.items() if k in size_fields} for it in items]
         product_dao.upsert_products(
             items,
             source_file=batch_id,

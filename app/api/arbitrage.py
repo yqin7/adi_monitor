@@ -187,10 +187,21 @@ def refresh(limit: int | None = Query(None, description="本轮最多查询多�
             "max_quote_age_days": max_quote_age_days}
 
 
-@router.post("/compute", summary="重新计算套利机会")
+@router.post("/compute", summary="重新计算套利机会（后台执行）")
 def compute(market: str = Query("CN", description="CN 国内卖 | HK 香港卖"),
             apply_filter: bool = Query(True, description="是否应用利润/ROI/流动性门槛")):
-    return arbitrage_service.compute(market=market, apply_filter=apply_filter)
+    # replace_arbitrage 是「写入新行 + 删掉 computed_at 更早的行」，两次 compute 并发
+    # （比如与定时 dewu 任务末尾那次）会留下两套参数混在一起的结果表。走 job_runner 互斥。
+    from app.services import job_runner
+
+    ok, msg = job_runner.start(
+        "compute", "重算利润",
+        lambda job: arbitrage_service.compute(market=market, apply_filter=apply_filter,
+                                              progress=job.log))
+    if not ok:
+        raise HTTPException(409, msg)
+    return {"message": "已在后台开始重算利润，进度见 GET /jobs/status",
+            "market": market, "apply_filter": apply_filter}
 
 
 @router.get("/promos", summary="当前促销活动概览（自动发现，措辞变化也能追踪）")

@@ -170,6 +170,7 @@ class ProductDAO:
             if entry is not None and self._price_key(entry) != self._price_key(last.get((sku, site))):
                 update["$push"] = {"price_list": entry}
                 pushed += 1
+                last[(sku, site)] = entry   # 同批再出现同一商品时，与这条比而不是与库里旧尾比
             ops.append(update_one({"sku": sku, "site": site}, update, upsert=True))
             keys.append((sku, site))
         return ops, keys, pushed
