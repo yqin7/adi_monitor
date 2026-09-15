@@ -68,7 +68,11 @@ pricing:
     tech_fee_rate: 0.05         # 技术服务费
     transfer_fee_rate: 0.01     # 银行转账费
     after_sale_rate: 0.025      # 售后无忧
-    operate_fee: 38             # 操作费（元）
+    operate_fee: 38             # 操作费（元），鞋/配件等非服装类
+    operate_fee_apparel:        # 服装类（*-clothing）按成交价分档，从高到低匹配第一个 >= min 的档
+      - {min: 400, fee: 38}
+      - {min: 300, fee: 28}
+      - {min: 0, fee: 18}
     postage_subsidy: 10         # 消费者邮费补贴（元）
 
   sell_hk:                      # 香港卖出（港币）

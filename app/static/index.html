@@ -363,6 +363,14 @@ const lim = id => { const v = $('#' + id).value.trim(); return v === '' ? null :
 const fmt = (v, d = 0) => v == null || isNaN(v) ? '—'
   : Number(v).toLocaleString('zh-CN', {minimumFractionDigits: d, maximumFractionDigits: d});
 
+const isApparel = c => !!c && String(c).toLowerCase().endsWith('clothing');
+function operateFeeCn(salePrice, f, category) {
+  const tiers = f.operate_fee_apparel;
+  if (!isApparel(category) || !tiers || !tiers.length) return f.operate_fee;
+  const t = [...tiers].sort((a, b) => b.min - a.min).find(t => salePrice >= t.min);
+  return t ? t.fee : f.operate_fee;
+}
+
 /* 单行试算：返利按各自比例相加，RetailMeNot 部分单笔封顶 $50 */
 function calc(r) {
   const ov = OVERRIDES[r.sku] || {};
@@ -389,12 +397,15 @@ function calc(r) {
   // 实测它 × 1.155 ≈ 得物 App 里买家的实付价，系数由 49 个尺码标定。
   const cnBase = r.dewu_price;
 
-  // 国内卖出：成交基数扣 技术5% + 转账1% + 售后无忧2.5%，再减 操作38 + 邮费补贴10
+  // 国内卖出：成交基数扣 技术5% + 转账1% + 售后无忧2.5%，再减 操作费 + 邮费补贴10
+  // 操作费：服装按成交价分档（>=400 38 / [300,400) 28 / <300 18），其余类目固定 38
   const f = FEES || {tax_rate:0.155, tech_fee_rate:0.05, transfer_fee_rate:0.01,
-                     after_sale_rate:0.025, operate_fee:38, postage_subsidy:10};
+                     after_sale_rate:0.025, operate_fee:38, postage_subsidy:10,
+                     operate_fee_apparel:[{min:400,fee:38},{min:300,fee:28},{min:0,fee:18}]};
   const cnPrice = cnBase * (1 + f.tax_rate);
+  const operateFee = operateFeeCn(cnPrice, f, r.category);
   const payoutCn = cnPrice * (1 - f.tech_fee_rate - f.transfer_fee_rate - f.after_sale_rate)
-                   - f.operate_fee - f.postage_subsidy;
+                   - operateFee - f.postage_subsidy;
 
   const costLocal = costCny;
   const profitCn = payoutCn - costLocal;

@@ -20,7 +20,9 @@ DEFAULTS: Dict[str, Any] = {
     "purchase": {"sales_tax": 0.0, "promo_rate": 1.0,
                  "cashback_bank": 0.0, "cashback_portal": 0.0},
     "sell_cn": {"tax_rate": 0.155, "tech_fee_rate": 0.05, "transfer_fee_rate": 0.01,
-                "after_sale_rate": 0.025, "operate_fee": 38, "postage_subsidy": 10},
+                "after_sale_rate": 0.025, "operate_fee": 38, "postage_subsidy": 10,
+                "operate_fee_apparel": [{"min": 400, "fee": 38}, {"min": 300, "fee": 28},
+                                        {"min": 0, "fee": 18}]},
     "sell_hk": {"tech_fee_rate": 0.05, "tech_fee_min": 18, "transfer_fee_rate": 0.01,
                 "threshold": 350, "operate_fee_low": 44, "operate_fee_high": 62},
     "shipping": {"enabled": False, "usd_per_item": 0.0},
@@ -73,7 +75,26 @@ def purchase_cost_usd(list_price_usd: float, cfg: Dict[str, Any],
 
 # ---------------------------------------------------------------- 得物到手价
 
-def payout_cn(dewu_price_cny: float, cfg: Dict[str, Any]) -> Dict[str, float]:
+def is_apparel(category: str | None) -> bool:
+    """men/women/kids-clothing 算服装；鞋、配件、sale 都不算。"""
+    return bool(category) and str(category).lower().endswith("clothing")
+
+
+def operate_fee_cn(sale_base_cny: float, cfg: Dict[str, Any],
+                   category: str | None = None) -> float:
+    """国内操作费：服装按成交价分档，其余类目固定。"""
+    s = cfg["sell_cn"]
+    tiers = s.get("operate_fee_apparel") or []
+    if not is_apparel(category) or not tiers:
+        return float(s["operate_fee"])
+    for t in sorted(tiers, key=lambda t: t["min"], reverse=True):
+        if sale_base_cny >= t["min"]:
+            return float(t["fee"])
+    return float(s["operate_fee"])
+
+
+def payout_cn(dewu_price_cny: float, cfg: Dict[str, Any],
+              category: str | None = None) -> Dict[str, float]:
     """得物国内到手价。dewu_price_cny 为海外接口查得的价格（不含电商税）。"""
     s = cfg["sell_cn"]
     # 国内成交基数 = 接口查得的香港报价 × (1 + tax_rate)。
@@ -85,7 +106,8 @@ def payout_cn(dewu_price_cny: float, cfg: Dict[str, Any]) -> Dict[str, float]:
     tech = base * s["tech_fee_rate"]
     transfer = base * s["transfer_fee_rate"]
     after_sale = base * s["after_sale_rate"]
-    fixed = s["operate_fee"] + s["postage_subsidy"]
+    operate = operate_fee_cn(base, cfg, category)
+    fixed = operate + s["postage_subsidy"]
     payout = base - tech - transfer - after_sale - fixed
 
     return {
@@ -94,7 +116,7 @@ def payout_cn(dewu_price_cny: float, cfg: Dict[str, Any]) -> Dict[str, float]:
         "tech_fee": round(tech, 2),
         "transfer_fee": round(transfer, 2),
         "after_sale_fee": round(after_sale, 2),
-        "operate_fee": float(s["operate_fee"]),
+        "operate_fee": operate,
         "postage_subsidy": float(s["postage_subsidy"]),
         "payout": round(payout, 2),
         "currency": "CNY",
@@ -138,7 +160,8 @@ def payout_hk(dewu_price_cny: float, cfg: Dict[str, Any]) -> Dict[str, float]:
 
 def evaluate(list_price_usd: float, dewu_price: float, cfg: Dict[str, Any],
              market: str = "CN", promo_rate: float | None = None,
-             promo_code: str | None = None) -> Dict[str, Any]:
+             promo_code: str | None = None,
+             category: str | None = None) -> Dict[str, Any]:
     """单个尺码的完整测算。
 
     market: "CN" 国内卖 | "HK" 香港卖
@@ -152,7 +175,7 @@ def evaluate(list_price_usd: float, dewu_price: float, cfg: Dict[str, Any],
         payout = payout_hk(dewu_price, cfg)
         cost_local = cost["cost_usd"] * fx["usd_cny"]
     else:
-        payout = payout_cn(dewu_price, cfg)
+        payout = payout_cn(dewu_price, cfg, category)
         cost_local = cost["cost_usd"] * fx["usd_cny"]
 
     profit = payout["payout"] - cost_local

@@ -88,7 +88,7 @@ def _chunk(seq: list, n: int):
 
 
 def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
-                   include_missed: bool = False, site: str | None = None,
+                   include_missed: bool = False, sites: list[str] | None = None,
                    max_quote_age_days: int | None = None,
                    fetch_hk: bool = False,
                    region: str = "CN", currency: str = "CNY",
@@ -103,6 +103,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
       3. 落库 —— 按货号拼回并写 dewu_quotes
 
     only_discounted    : 只查 Adidas 在打折的商品
+    sites              : 只查这些站点（us/kr/jp/gb/ca）有的货号；None = 全部站点
     include_missed     : 是否重试历史未命中的货号
     max_quote_age_days : 只重查报价超过 N 天的货号（省得物调用额度）
     fetch_hk           : 是否额外按 HKD 口径再查一次价格。
@@ -122,12 +123,17 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     dao = ArbitrageDAO(conn.db)
     dao.ensure_indexes()
     _dc().load_env()
+    import os
+    if not (os.getenv("DEWU_INTL_APP_KEY") and os.getenv("DEWU_INTL_APP_SECRET")):
+        # 没凭证时每个请求都会失败，与其空跑上千个货号再报「失败 N」，不如开头就停
+        raise RuntimeError("缺少得物凭证 DEWU_INTL_APP_KEY / DEWU_INTL_APP_SECRET，"
+                           "请写入项目 .env 后重启服务")
 
     q: dict[str, Any] = {}
     if only_discounted:
         q["sale_price"] = {"$ne": None}
-    if site:
-        q["site"] = site
+    if sites:
+        q["site"] = {"$in": list(sites)}
     all_skus = sorted({d["sku"] for d in conn.db["products"].find(q, {"sku": 1})})
     targets = dao.skus_to_refresh(all_skus, include_missed=include_missed,
                                   max_quote_age_days=max_quote_age_days)
@@ -139,7 +145,8 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
     todo = [s for s in targets if s not in cached]
     stale_note = (f"（只查报价 >{max_quote_age_days} 天的）"
                   if max_quote_age_days is not None else "")
-    report(f"候选 {len(all_skus)}，本轮 {len(targets)}{stale_note}；"
+    scope = f"站点 {','.join(sites)} " if sites else "全部站点 "
+    report(f"{scope}候选 {len(all_skus)}，本轮 {len(targets)}{stale_note}；"
            f"目录缓存命中 {len(cached)}，需拉取 {len(todo)}")
 
     catalogs: dict[str, dict] = {s: cached[s] for s in cached}
@@ -227,7 +234,7 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
                                                      country_code="HK"),
                          c, "批量价格HK")
 
-    saved = 0
+    saved = processed = 0
     dewu_size_pairs: list[tuple[str, str]] = []   # 得物侧尺码写法，整轮末尾统一登记
     for gi in range(0, len(skus_sorted), SAVE_EVERY):
         if should_stop and should_stop():
@@ -317,16 +324,17 @@ def refresh_quotes(*, limit: int | None = None, only_discounted: bool = False,
         dao.save_quotes(batch)
         saved += len(batch)
         errors += skipped
+        processed += len(group)
         extra = ""
         if skipped:
-            extra = f"（{skipped} 个货号请求失败，保留旧报价）"
+            extra = f"（本组成功 {len(batch)}，失败 {skipped}，失败的保留旧报价）"
         if retry_stat["rate_limited"] or retry_stat["gave_up"]:
             extra += (f"（限流重试 {retry_stat['rate_limited']} 次，"
                      f"累计退避 {retry_stat['slept']:.0f}s，放弃 {retry_stat['gave_up']} 次）")
             retry_stat.update(rate_limited=0, slept=0.0, gave_up=0)
         # 说明「已完成」而不是「已落库」：这一组的耗时绝大部分花在查得物接口
         # （每 20 个 skuId 一批、价格与销量各一次），写库只占很小一部分。
-        report(f"  已完成 {saved}/{len(catalogs)} 个货号 "
+        report(f"  已处理 {processed}/{len(catalogs)} 个货号 "
                f"[本组 {time.time() - t_group:.0f}s]{extra}")
 
     report(f"报价补全完成：命中 {saved}，未命中 {miss}，失败 {errors}")
@@ -430,7 +438,8 @@ def compute(*, market: str = "CN", apply_filter: bool = True,
             considered += 1
             sales = size.get("globalSoldNum30")
             res = evaluate(usd, price, site_cfg, market=market,
-                           promo_rate=p.get("promo_rate"), promo_code=p.get("promo_code"))
+                           promo_rate=p.get("promo_rate"), promo_code=p.get("promo_code"),
+                           category=p.get("category"))
             if apply_filter and not passes_filter(res, sales, cfg):
                 continue
             rows.append({

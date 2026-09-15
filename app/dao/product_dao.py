@@ -70,12 +70,24 @@ class ProductDAO:
         batch_id = source_file or now.strftime("price_%Y%m%d_%H%M%S")
         total = len(products) if hasattr(products, "__len__") else None
         total_label = str(total) if total is not None else "?"
-        product_ops = []
-        op_keys: list[tuple[str, str]] = []   # 与 product_ops 一一对应，用于回查新插入的是谁
+        # 每项 (sku, site, document, price_entry|None)，攒够一批再决定哪些要 $push
+        pending: list[tuple[str, str, dict, dict | None]] = []
         new_skus: list[dict[str, str]] = []   # 本批首次入库的 (sku, site)
         count = 0
         products_written = 0
+        price_points = 0
         print(f"MongoDB 开始同步: {total_label} 个 SKU", flush=True)
+
+        def flush() -> None:
+            nonlocal products_written, price_points
+            if not pending:
+                return
+            ops, keys, pushed = self._build_ops(pending, now, batch_id, UpdateOne)
+            price_points += pushed
+            new_skus.extend(self._flush_products(ops, keys, BulkWriteError))
+            products_written += len(ops)
+            pending.clear()
+            print(f"  products: {products_written}/{total_label}", flush=True)
 
         for item in products:
             sku = str(item.get("sku", "")).strip().upper()
@@ -88,9 +100,18 @@ class ProductDAO:
             document["site"] = site
             document["updated_at"] = now
             document["source_file"] = source_file
+            entry = None
             if record_price_history:
                 document["last_price_observed_at"] = now
                 document["last_price_batch_id"] = batch_id
+                entry = {
+                    "batch_id": batch_id,
+                    "observed_at": now,
+                    "sale_price": item.get("sale_price"),
+                    "orig_price": item.get("orig_price"),
+                    "discount_pct": item.get("discount_pct"),
+                    "is_sold_out": item.get("is_sold_out", False),
+                }
             if include_sizes:
                 document["has_sizes"] = bool(item.get("sizes"))
             else:
@@ -99,41 +120,54 @@ class ProductDAO:
                 document.pop("overall_status", None)
                 document.pop("checked_at", None)
 
+            pending.append((sku, site, document, entry))
+            count += 1
+            if len(pending) >= WRITE_BATCH_SIZE:
+                flush()
+
+        flush()
+        print(f"MongoDB 写入完成: products={products_written}, 新品={len(new_skus)}, "
+              f"价格变化点={price_points}", flush=True)
+        return {"count": count, "new_count": len(new_skus), "new_skus": new_skus,
+                "price_points": price_points}
+
+    @staticmethod
+    def _price_key(e: dict | None) -> tuple:
+        e = e or {}
+        return (e.get("sale_price"), e.get("orig_price"), bool(e.get("is_sold_out", False)))
+
+    def _build_ops(self, pending, now, batch_id, update_one):
+        """把一批待写项变成 UpdateOne。
+
+        price_list 只存「价格变化点」：先取这批商品 price_list 的最后一条，
+        sale_price / orig_price / is_sold_out 三者都没变就不 $push ——
+        实测 87% 的扫描价格与上次相同，逐次追加只会把文档撑大。
+        「这个价最后一次确认是什么时候」由商品级 last_price_observed_at 承担。
+        """
+        need_last = [(s, t) for s, t, _, e in pending if e is not None]
+        last: dict[tuple[str, str], dict | None] = {}
+        if need_last:
+            cur = self.collection.find(
+                {"$or": [{"sku": s, "site": t} for s, t in need_last]},
+                {"sku": 1, "site": 1, "price_list": {"$slice": -1}})
+            for d in cur:
+                pl = d.get("price_list") or []
+                last[(d["sku"], d.get("site", "us"))] = pl[-1] if pl else None
+
+        ops, keys, pushed = [], [], 0
+        for sku, site, document, entry in pending:
             # $setOnInsert 只在首次插入时写，之后每轮扫描都不会覆盖 ——
             # 这是「这件商品第一次出现在官网」的唯一凭据，新品检测全靠它。
             update: dict[str, Any] = {
                 "$set": document,
                 "$setOnInsert": {"created_at": now, "first_seen_batch": batch_id},
             }
-            if record_price_history:
-                # 价格历史内嵌在 products.price_list 里，读最新价格只需取数组最后一个元素。
-                update["$push"] = {"price_list": {
-                    "batch_id": batch_id,
-                    "observed_at": now,
-                    "sale_price": item.get("sale_price"),
-                    "orig_price": item.get("orig_price"),
-                    "discount_pct": item.get("discount_pct"),
-                    "is_sold_out": item.get("is_sold_out", False),
-                }}
-            product_ops.append(UpdateOne({"sku": sku, "site": site}, update, upsert=True))
-            op_keys.append((sku, site))
-            count += 1
-
-            if len(product_ops) >= WRITE_BATCH_SIZE:
-                batch_size = len(product_ops)
-                new_skus.extend(self._flush_products(product_ops, op_keys, BulkWriteError))
-                products_written += batch_size
-                product_ops.clear()
-                op_keys.clear()
-                print(f"  products: {products_written}/{total_label}", flush=True)
-
-        if product_ops:
-            batch_size = len(product_ops)
-            new_skus.extend(self._flush_products(product_ops, op_keys, BulkWriteError))
-            products_written += batch_size
-            print(f"  products: {products_written}/{total_label}", flush=True)
-        print(f"MongoDB 写入完成: products={products_written}, 新品={len(new_skus)}", flush=True)
-        return {"count": count, "new_count": len(new_skus), "new_skus": new_skus}
+            if entry is not None and self._price_key(entry) != self._price_key(last.get((sku, site))):
+                update["$push"] = {"price_list": entry}
+                pushed += 1
+            ops.append(update_one({"sku": sku, "site": site}, update, upsert=True))
+            keys.append((sku, site))
+        return ops, keys, pushed
 
     def _flush_products(self, ops, keys, bulk_write_error) -> list[dict[str, str]]:
         """写一批 products，返回其中【首次插入】的 (sku, site)。

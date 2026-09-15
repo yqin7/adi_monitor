@@ -53,7 +53,7 @@ def _alert_unparsed(db, notifier, log) -> None:
 JOBS = {
     "all": "全流程：Adidas 抓取 → 得物报价 → 算利润",
     "adidas": "只抓 Adidas：各国官网 SKU + 尺码",
-    "dewu": "只查得物报价（跳过已知没有的货号）",
+    "dewu": "只查得物报价（所选国家有的货号，跳过已知没有的）",
     "dewu-retry": "重查历史未命中货号",
     "compute": "只重算利润（不发请求）",
 }
@@ -129,13 +129,13 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
         if name == "adidas":
             scan_adidas()
         elif name == "dewu":
-            out["dewu"] = refresh_quotes(limit=limit, progress=log, should_stop=stop,
+            out["dewu"] = refresh_quotes(limit=limit, sites=sites, progress=log, should_stop=stop,
                                          max_quote_age_days=max_quote_age_days,
                                          fetch_hk=fetch_hk)
             out["compute"] = compute(market=market, progress=log)
         elif name == "dewu-retry":
             log("重查历史未命中货号（按 30 天冷却期）")
-            out["dewu"] = refresh_quotes(limit=limit, include_missed=True,
+            out["dewu"] = refresh_quotes(limit=limit, sites=sites, include_missed=True,
                                          progress=log, should_stop=stop)
             out["compute"] = compute(market=market, progress=log)
         elif name == "compute":
@@ -144,7 +144,7 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
             scan_adidas()
             if not stop():
                 log("=== 得物报价（跨站去重、跳过已知未命中）===")
-                out["dewu"] = refresh_quotes(limit=limit, progress=log, should_stop=stop,
+                out["dewu"] = refresh_quotes(limit=limit, sites=sites, progress=log, should_stop=stop,
                                              max_quote_age_days=max_quote_age_days,
                                              fetch_hk=fetch_hk)
                 out["compute"] = compute(market=market, progress=log)
@@ -161,7 +161,8 @@ def list_jobs():
 
 @router.post("/run/{name}", summary="启动任务")
 def run(name: str,
-        sites: str = Query(",".join(ALL_SITES), description="逗号分隔，仅 adidas/all 生效"),
+        sites: str = Query(",".join(ALL_SITES),
+                           description="逗号分隔。adidas/all：抓这些站；dewu/dewu-retry/all：只查这些站有的货号"),
         limit: int | None = Query(None, description="本轮最多处理多少货号"),
         market: str = Query("CN"),
         max_quote_age_days: int | None = Query(

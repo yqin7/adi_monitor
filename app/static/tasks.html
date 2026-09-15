@@ -55,6 +55,8 @@
   .jc .d{font-size:12px;color:var(--muted);flex:1;line-height:1.55}
   .jc .u{font-size:11.5px;color:var(--muted);opacity:.75}
   .jc button{width:100%}
+  .jc .quick{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+  .jc .quick button{width:auto;flex:1 1 auto;padding:6px 8px;font-size:12px;font-weight:500}
 
   .jobinfo{font-size:13px;color:var(--muted)}
   .jobinfo .run{color:var(--pos);font-weight:600}
@@ -82,7 +84,7 @@
   <div class="panel">
     <h2>国家</h2>
     <div class="sites" id="sites"></div>
-    <div class="hint">仅对「全流程」「只抓 Adidas」生效 —— 得物查询是把各国货号跨站去重后统一进行的，不分国家。</div>
+    <div class="hint">对「全流程」「只抓 Adidas」「得物报价」生效。只想抓某一个国家的 Adidas，直接点下面「只抓 Adidas」卡片里对应国家的按钮。</div>
   </div>
 
   <div class="panel">
@@ -148,8 +150,8 @@ const SITES = [['us','\u{1F1FA}\u{1F1F8} 美国'], ['kr','\u{1F1F0}\u{1F1F7} 韩
 const USES = {
   'all':        {sites:true,  limit:true,  age:true,  hk:true},
   'adidas':     {sites:true,  limit:false, age:false},
-  'dewu':       {sites:false, limit:true,  age:true,  hk:true},
-  'dewu-retry': {sites:false, limit:true,  age:false, hk:true},
+  'dewu':       {sites:true,  limit:true,  age:true,  hk:true},
+  'dewu-retry': {sites:true,  limit:true,  age:false, hk:true},
   'compute':    {sites:false, limit:false, age:false},
 };
 
@@ -196,15 +198,20 @@ function renderJobs() {
       <div class="t">${title}</div>
       <div class="d">${desc || '&nbsp;'}</div>
       <div class="u">${u.sites
-          ? (chosen ? '将抓取：' + chosen : '未选国家')
+          ? (chosen ? (j.name.startsWith('dewu') ? '只查这些站的货号：' : '将抓取：') + chosen : '未选国家')
           : '不分国家'}${uses.length ? ' · ' + uses.join(' · ') : ''}</div>
+      ${j.name === 'adidas' ? `<div class="quick">${SITES.map(([k, label]) =>
+          `<button class="ghost one" data-job="adidas" data-site="${k}"
+                   ${busy ? 'disabled' : ''} title="只抓 ${label}">只抓 ${label}</button>`).join('')}</div>` : ''}
       <button class="job${j.name === 'all' ? '' : ' ghost'}" data-job="${j.name}"
               ${busy || blocked ? 'disabled' : ''}
-              title="${blocked ? '请先勾选至少一个国家' : ''}">运行</button>
+              title="${blocked ? '请先勾选至少一个国家' : ''}">${u.sites ? '运行（已选国家）' : '运行'}</button>
     </div>`;
   }).join('');
   document.querySelectorAll('button.job').forEach(b =>
     b.onclick = () => runJob(b.dataset.job));
+  document.querySelectorAll('button.one').forEach(b =>
+    b.onclick = () => runJob(b.dataset.job, [b.dataset.site]));
 }
 
 async function loadJobs() {
@@ -227,10 +234,10 @@ function appendLog(lines) {
   if (atBottom) el.scrollTop = el.scrollHeight;
 }
 
-async function runJob(name) {
+async function runJob(name, sitesOverride) {
   const u = USES[name] || {};
   const p = new URLSearchParams({market: $('#market').value});
-  if (u.sites) p.set('sites', [...picked].join(','));
+  if (u.sites) p.set('sites', (sitesOverride || [...picked]).join(','));
   const lim = $('#limit').value.trim();
   if (u.limit && lim !== '') p.set('limit', lim);
   const age = $('#ageDays').value.trim();
