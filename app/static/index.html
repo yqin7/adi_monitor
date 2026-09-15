@@ -111,6 +111,7 @@
   body.hide-hk .col-hk{display:none}
   .stk.ok{background:rgba(16,160,80,.18);color:var(--pos)}
   .stk.no{background:rgba(200,50,40,.16);color:var(--neg)}
+  .stk.off{background:rgba(110,118,129,.18);color:var(--muted)}   /* 未在架：与有货/断码同款胶囊，中性色 */
   .sku{font-family:ui-monospace,Menlo,monospace;font-size:12px}
   .tag{display:inline-block;padding:1px 5px;border-radius:4px;font-size:11px;
        background:rgba(127,127,127,.15);color:var(--muted)}
@@ -518,7 +519,7 @@ function render() {
       <td><span class="cat">${CAT[r.category] || r.category || '—'}</span></td>
       <td class="tight"><span class="tag">${r.size ?? '—'}</span></td>
       <td class="tight">${
-        r.delisted ? '<span class="stk unk" title="最近一轮官网扫描没有这件商品：已下架或售罄，库里是下架前的状态">未在架</span>'
+        r.delisted ? '<span class="stk off" title="最近一轮官网扫描没有这件商品：已下架或售罄，库里是下架前的状态">未在架</span>'
       : r.in_stock === true ? '<span class="stk ok">有货</span>'
       : r.in_stock === false ? '<span class="stk no">断码</span>'
       : '<span class="stk unk" title="该站点无尺码库存数据">—</span>'}</td>
@@ -759,7 +760,7 @@ async function searchSku() {
       + '<td class="num">' + (s.sale_price != null ? c + s.sale_price : '—') + '</td>'
       + '<td>' + (s.promo_code ? esc(s.promo_code) + ' ' + off : '—') + '</td>'
       + '<td class="num">' + s.size_count + '</td>'
-      + '<td>' + (s.delisted ? '<span class="stk2 n" title="最近一轮官网扫描没有它，库里是下架前的状态">未在架</span>'
+      + '<td>' + (s.delisted ? '<span class="stk2 u" title="最近一轮官网扫描没有它，库里是下架前的状态">未在架</span>'
                   : s.is_sold_out ? '<span class="stk2 n">售罄</span>' : '—') + '</td>'
       + '<td>' + (s.scraped_at ? ago(s.scraped_at) : '—') + '</td>'
       + '<td class="gap">' + (s.url ? '<a href="' + esc(s.url) + '" target="_blank" rel="noopener">打开</a>' : '') + '</td>'
