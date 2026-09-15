@@ -52,17 +52,15 @@
   .dot.f1{background:#d29922}   /* 1-7 天 */
   .dot.f2{background:#f85149}   /* 超过 7 天 */
   .dot.f3{background:#6e7681}   /* 时间未知 */
-  .dot::after{
-    content:attr(data-tip);position:absolute;left:-4px;bottom:calc(100% + 8px);
-    background:var(--accent);color:var(--bg);padding:7px 10px;border-radius:6px;
-    font-size:11.5px;line-height:1.6;white-space:pre;text-align:left;
-    opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none;z-index:9;
-    box-shadow:0 3px 10px rgba(0,0,0,.25)}
-  .dot::before{
-    content:"";position:absolute;left:1px;bottom:calc(100% + 3px);
-    border:5px solid transparent;border-top-color:var(--accent);
-    opacity:0;visibility:hidden;transition:opacity .12s;z-index:9}
-  .dot:hover::after,.dot:hover::before{opacity:1;visibility:visible}
+  /* 新鲜度提示挂在 body 上用 fixed 定位：表格容器 overflow:auto 会把
+     首行往上弹的 ::after 裁掉一半，剩下的又压在 sticky 表头上 */
+  #dotTip{position:fixed;z-index:50;background:var(--accent);color:var(--bg);
+          padding:7px 10px;border-radius:6px;font-size:11.5px;line-height:1.6;
+          white-space:pre;text-align:left;pointer-events:none;
+          box-shadow:0 3px 10px rgba(0,0,0,.25)}
+  #dotTip::before{content:"";position:absolute;left:8px;border:5px solid transparent}
+  #dotTip.below::before{bottom:100%;border-bottom-color:var(--accent)}
+  #dotTip.above::before{top:100%;border-top-color:var(--accent)}
   input,select{background:var(--bg);color:var(--text);border:1px solid var(--line);
                border-radius:7px;padding:6px 8px;font-size:13px;width:96px}
   #ship,#tax,#rakuten,#rmn,#bank{width:74px}
@@ -798,6 +796,28 @@ async function searchSku() {
 }
 
 const SITE_CN = {us:'美国', kr:'韩国', jp:'日本', gb:'英国', ca:'加拿大'};
+
+/* 新鲜度圆点的悬浮提示：靠近视口顶部就往下弹，否则往上弹 */
+(() => {
+  const tip = document.createElement('div');
+  tip.id = 'dotTip'; tip.hidden = true;
+  document.body.appendChild(tip);
+  document.addEventListener('mouseover', e => {
+    const dot = e.target.closest('.dot');
+    if (!dot) return;
+    tip.textContent = (dot.dataset.tip || '').replace(/&#10;/g, '\n');
+    tip.hidden = false;
+    const r = dot.getBoundingClientRect();
+    const h = tip.offsetHeight, w = tip.offsetWidth;
+    const below = r.top - h - 10 < 60;          // 上方放不下（或会压到 sticky 表头）
+    tip.className = below ? 'below' : 'above';
+    tip.style.top = (below ? r.bottom + 8 : r.top - h - 8) + 'px';
+    tip.style.left = Math.min(Math.max(8, r.left - 4), window.innerWidth - w - 8) + 'px';
+  });
+  document.addEventListener('mouseout', e => {
+    if (e.target.closest && e.target.closest('.dot')) tip.hidden = true;
+  });
+})();
 
 $('#skuGo').onclick = searchSku;
 $('#skuSearch').addEventListener('keydown', e => {
