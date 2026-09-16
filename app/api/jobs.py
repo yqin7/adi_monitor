@@ -130,9 +130,15 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
                         notify(site, out[site])              # 国际站一次抓取兼得两类信号
                 except Exception as exc:
                     failed_sites.append(site)
-                    out[site] = {"healthy": False, "error": f"{type(exc).__name__}: {exc}"}
-                    log(f"  【{site.upper()} 站失败】{type(exc).__name__}: {str(exc)[:300]}，继续下一站")
+                    err = f"{type(exc).__name__}: {str(exc)[:300]}"
+                    out[f"{site}_error"] = err          # 单独存，别覆盖同站已成功的价格结果
+                    log(f"  【{site.upper()} 站失败】{err}，继续下一站")
                     logger.exception("站点 %s 抓取失败", site)
+                    try:
+                        from app.services.slack_service import SlackNotifier
+                        SlackNotifier().send_text(f"【抓取失败】{site.upper()} 站：{err}")
+                    except Exception:
+                        pass
             if failed_sites:
                 # 全部失败才算任务失败；部分失败记在结果里，任务状态仍为完成
                 out["failed_sites"] = failed_sites
@@ -145,12 +151,14 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
             out["dewu"] = refresh_quotes(limit=limit, sites=sites, progress=log, should_stop=stop,
                                          max_quote_age_days=max_quote_age_days,
                                          fetch_hk=fetch_hk)
-            out["compute"] = compute(market=market, progress=log)
+            if not stop():                    # 被看门狗释放/取消后别再与新任务并发写 arbitrage
+                out["compute"] = compute(market=market, progress=log)
         elif name == "dewu-retry":
             log("重查历史未命中货号（按 30 天冷却期）")
             out["dewu"] = refresh_quotes(limit=limit, sites=sites, include_missed=True,
                                          progress=log, should_stop=stop)
-            out["compute"] = compute(market=market, progress=log)
+            if not stop():
+                out["compute"] = compute(market=market, progress=log)
         elif name == "compute":
             out["compute"] = compute(market=market, progress=log)
         elif name == "all":

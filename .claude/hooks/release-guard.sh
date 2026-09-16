@@ -32,12 +32,16 @@ while IFS= read -r seg; do
 
   [[ "$sub" == "push" ]] || continue
 
-  # 3. 不许直接 push main：参数里显式出现 main / :main，或在 main 分支上裸 push
-  if printf '%s' "$args" | grep -Eq '(^|[[:space:]]|:)main([[:space:]]|$)'; then
+  # 3. 不许直接 push main：参数里显式出现 main / :main / refs/heads/main，
+  #    或在 main 分支上裸 push / push HEAD / push @（都是推当前分支）
+  if printf '%s' "$args" | grep -Eq '(^|[[:space:]]|:|/)main([[:space:]]|$)'; then
     deny "main 只通过 PR 合并，不直接 push。用 gh pr create / gh pr merge。"
   fi
-  if [[ "$branch" == "main" ]] && ! printf '%s' "$args" | grep -Eq '[[:space:]][^-[:space:]]+[[:space:]]+[^-[:space:]]+'; then
-    deny "当前在 main 上裸 push 会推 main。main 只通过 PR 合并。"
+  if [[ "$branch" == "main" ]]; then
+    refspec=$(printf '%s' "$args" | sed -E 's/[[:space:]]+-[^[:space:]]+//g' | awk '{print $2}')
+    if [[ -z "$refspec" || "$refspec" == "HEAD" || "$refspec" == "@" || "$refspec" == HEAD:* ]]; then
+      deny "当前在 main 上，这样 push 会推 main。main 只通过 PR 合并。"
+    fi
   fi
 
   # 2. push release-x.y.z 必须等于 origin/main
