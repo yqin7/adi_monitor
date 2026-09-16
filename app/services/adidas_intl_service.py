@@ -97,7 +97,9 @@ def parse_item(it: dict, category: str, site: str) -> dict | None:
 
     link = it.get("link") or ""
     url = (f"https://{host}" + link) if link.startswith("/") else link
-    sizes = [s for s in (it.get("availableSizes") or []) if s and str(s).lower() != "hidden"]
+    # availableSizes 是尺码范围，orderable=0 的售罄商品照样列全，得按 orderable 清空
+    sizes = ([s for s in (it.get("availableSizes") or []) if s and str(s).lower() != "hidden"]
+             if it.get("orderable") else [])
     _now = datetime.utcnow()
 
     return {
@@ -184,6 +186,16 @@ def run_site_scan(site: str, category: str | None = None,
         _scope["category"] = category
     prev = _conn.db["products"].count_documents(_scope)
     ratio = (len(deduped) / prev) if prev else 1.0
+    if deduped and not any(x.get("available_sizes") for x in deduped):
+        # 尺码按 orderable 清空；全站一个尺码都没有只能是接口字段变了，别把库里尺码清光
+        msg = (f"[{label_cn}] 【抓取异常】{len(deduped)} 个 SKU 全部无尺码，疑似接口字段变化"
+               f"（orderable / availableSizes）。已放弃写库，保留原有数据。")
+        report(msg)
+        log.error(msg)
+        return {"site": site, "total": len(deduped), "discounted": 0,
+                "batch_id": None, "healthy": False, "error": msg,
+                "prev_total": prev, "new_count": 0, "new_skus": [],
+                "restock": {}, "out_of_stock": {}}
     if prev and ratio < HEALTH_MIN_RATIO:
         msg = (f"[{label_cn}{'/' + category if category else ''}] 【抓取异常】"
                f"本轮 {len(deduped)} 个 SKU，"

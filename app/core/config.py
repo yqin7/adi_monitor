@@ -102,12 +102,18 @@ def build_proxy_url(proxy_cfg: Dict[str, Any]) -> str | None:
         return None
 
     protocol = proxy_cfg.get("protocol") or "http"
+    # SOCKS 一律让代理端解析域名（socks5h/socks4a）：Adidas 走 Akamai CDN，
+    # 本地解析出的节点是按机房位置分配的，住宅代理出口连不上，会报 SOCKS5 (4) 主机不可达。
+    if protocol in ("socks5", "socks4"):
+        protocol += "h" if protocol == "socks5" else "a"
     username = proxy_cfg.get("username")
     password = proxy_cfg.get("password")
 
     auth = ""
     if username:
-        auth = f"{username}:{password}@" if password else f"{username}@"
+        from urllib.parse import quote
+        u, pw = quote(str(username), safe=""), quote(str(password or ""), safe="")
+        auth = f"{u}:{pw}@" if password else f"{u}@"
 
     return f"{protocol}://{auth}{host}:{port}"
 

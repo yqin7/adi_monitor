@@ -88,6 +88,28 @@ def start(name: str, label: str, fn: Callable[[Job], Any]) -> tuple[bool, str]:
     return True, "已启动"
 
 
+def release_if_stuck(max_seconds: float) -> bool:
+    """任务跑得比 max_seconds 还久就当它卡死：标记失败、释放锁，让后续任务能启动。
+
+    Python 杀不掉线程，那个线程若还活着会继续跑到自然结束；这里只是不再让它
+    永久占着调度。所有网络调用都设了超时，真正卡死极少见，这是最后的保险。
+    """
+    global _current
+    with _lock:
+        job = _current
+        if not (job and job.status == "running"):
+            return False
+        if (datetime.now() - job.started_at).total_seconds() < max_seconds:
+            return False
+        job.status = "failed"
+        job.error = f"超过 {max_seconds / 3600:.0f} 小时未结束，被看门狗判定卡死"
+        job.ended_at = datetime.now()
+        job.log(job.error)
+        job.cancel.set()
+        _current = None
+        return True
+
+
 def request_cancel() -> bool:
     """请求停止当前任务。任务在下一个检查点自行退出。"""
     if is_busy() and _current:

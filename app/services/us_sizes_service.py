@@ -87,7 +87,9 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
                 # 空列表也要收：整只断码的商品若被滤掉，旧 available_sizes
                 # 永远不清、record_changes 也看不到它，断码永远报不出来。
                 if sku:
-                    collected[sku] = _clean_sizes(it.get("availableSizes"))
+                    # availableSizes 是「这款有哪些码」，不是「哪些码有货」：
+                    # orderable=0 的售罄商品照样列全部尺码（IJ7058 售罄仍列 9 个码）。
+                    collected[sku] = _clean_sizes(it.get("availableSizes")) if it.get("orderable") else []
 
         absorb(first)
         starts = [p * PAGE_SIZE for p in range(1, pages)]
@@ -99,9 +101,19 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     # 与国际站同一套健康门槛：抓崩了要明确报错，不能安静返回 0
     prev = prod.count_documents({"site": "us", "available_sizes": {"$exists": True}})
     ratio = (len(collected) / prev) if prev else 1.0
+    with_sizes = sum(1 for v in collected.values() if v)
     if not collected or (prev and ratio < 0.6):
         msg = (f"美国站尺码抓取异常：本轮 {len(collected)} 个，库里已有 {prev} 个"
                f"（{ratio:.0%}，门槛 60%）。已放弃写库，保留原有数据。")
+        report(msg)
+        log.error(msg)
+        return {"skus": len(collected), "updated": 0, "healthy": False,
+                "error": msg, "restock": {}, "out_of_stock": {}}
+    if with_sizes == 0:
+        # 尺码按 orderable 清空：若接口改了字段名（orderable 全缺失），这里会把全站
+        # 尺码清成空、断码告警刷屏。抓到几千个 SKU 却一个尺码都没有，只能是接口变了。
+        msg = (f"美国站尺码抓取异常：{len(collected)} 个 SKU 全部无尺码，疑似接口字段变化"
+               f"（orderable / availableSizes）。已放弃写库，保留原有数据。")
         report(msg)
         log.error(msg)
         return {"skus": len(collected), "updated": 0, "healthy": False,

@@ -61,6 +61,8 @@ def make_session(config: dict | None = None) -> cf_requests.Session:
     proxy.enabled = false -> 真正直连（默认忽略 HTTP_PROXY 等环境变量；
                              想沿用系统代理设 proxy.use_env_proxy: true）
     """
+    from app.core.guard import assert_scrape_allowed
+    assert_scrape_allowed("Adidas 抓取会话")
     cfg = config if config is not None else load_config()
     if proxy_enabled(cfg):
         session = cf_requests.Session(trust_env=False)
@@ -521,9 +523,16 @@ def run_full_scan(
         }
     """
     def _report(stage: str, message: str):
+        # 两种回调都要接：/scan 传的是 (stage, message)，任务页 job.log 只收 (message)。
+        # 之前只按两参数调，job.log 每次 TypeError 被吞掉，任务页上美国站整段空白。
         if progress_cb:
             try:
                 progress_cb(stage, message)
+            except TypeError:
+                try:
+                    progress_cb(message)
+                except Exception:
+                    pass
             except Exception:
                 pass
         print(message, flush=True)
@@ -546,9 +555,9 @@ def run_full_scan(
     all_results: list[dict] = []
     for slug, extra, label, _ in cats:
         _report("plp", f"开始抓取分类: {label}")
-        all_results.extend(fetch_category(
-            session, resolved_build_id, slug, extra, label, plp_workers=plp_workers
-        ))
+        got = fetch_category(session, resolved_build_id, slug, extra, label, plp_workers=plp_workers)
+        all_results.extend(got)
+        _report("plp", f"  [{label}] 完成 {len(got)} 条")
         time.sleep(SLEEP_SEC * 2)
 
     if FAILED_PAGES:

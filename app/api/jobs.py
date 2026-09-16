@@ -110,21 +110,40 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
                 conn.close()
 
         def scan_adidas():
+            failed_sites = []
             for site in sites:
                 if stop():
                     log("已请求停止，跳过剩余站点")
                     break
-                if site == "us":
-                    log("=== 🇺🇸 美国站：抓取 SKU ===")
-                    out["us"] = run_full_scan(include_sizes=False, progress_cb=log)
-                    notify("us", out["us"])              # 新品来自价格扫描
-                    log("=== 🇺🇸 美国站：补全尺码 ===")
-                    out["us_sizes"] = us_sizes_service.run(progress=log)
-                    notify("us", out["us_sizes"])        # 补货来自尺码扫描
-                else:
-                    log(f"=== {site.upper()} 站抓取 ===")
-                    out[site] = adidas_intl_service.run_site_scan(site, progress=log)
-                    notify(site, out[site])              # 国际站一次抓取兼得两类信号
+                # 一个站抛异常（比如美国站 buildId 探测失败）不能让后面几个站整小时不扫
+                try:
+                    if site == "us":
+                        log("=== 🇺🇸 美国站：抓取 SKU ===")
+                        out["us"] = run_full_scan(include_sizes=False, progress_cb=log)
+                        notify("us", out["us"])              # 新品来自价格扫描
+                        log("=== 🇺🇸 美国站：补全尺码 ===")
+                        out["us_sizes"] = us_sizes_service.run(progress=log)
+                        notify("us", out["us_sizes"])        # 补货来自尺码扫描
+                    else:
+                        log(f"=== {site.upper()} 站抓取 ===")
+                        out[site] = adidas_intl_service.run_site_scan(site, progress=log)
+                        notify(site, out[site])              # 国际站一次抓取兼得两类信号
+                except Exception as exc:
+                    failed_sites.append(site)
+                    err = f"{type(exc).__name__}: {str(exc)[:300]}"
+                    out[f"{site}_error"] = err          # 单独存，别覆盖同站已成功的价格结果
+                    log(f"  【{site.upper()} 站失败】{err}，继续下一站")
+                    logger.exception("站点 %s 抓取失败", site)
+                    try:
+                        from app.services.slack_service import SlackNotifier
+                        SlackNotifier().send_text(f"【抓取失败】{site.upper()} 站：{err}")
+                    except Exception:
+                        pass
+            if failed_sites:
+                # 全部失败才算任务失败；部分失败记在结果里，任务状态仍为完成
+                out["failed_sites"] = failed_sites
+                if len(failed_sites) == len(sites):
+                    raise RuntimeError(f"所有站点抓取失败：{','.join(failed_sites)}")
 
         if name == "adidas":
             scan_adidas()
@@ -132,12 +151,14 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
             out["dewu"] = refresh_quotes(limit=limit, sites=sites, progress=log, should_stop=stop,
                                          max_quote_age_days=max_quote_age_days,
                                          fetch_hk=fetch_hk)
-            out["compute"] = compute(market=market, progress=log)
+            if not stop():                    # 被看门狗释放/取消后别再与新任务并发写 arbitrage
+                out["compute"] = compute(market=market, progress=log)
         elif name == "dewu-retry":
             log("重查历史未命中货号（按 30 天冷却期）")
             out["dewu"] = refresh_quotes(limit=limit, sites=sites, include_missed=True,
                                          progress=log, should_stop=stop)
-            out["compute"] = compute(market=market, progress=log)
+            if not stop():
+                out["compute"] = compute(market=market, progress=log)
         elif name == "compute":
             out["compute"] = compute(market=market, progress=log)
         elif name == "all":

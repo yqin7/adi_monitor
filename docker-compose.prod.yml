@@ -6,11 +6,12 @@ services:
     container_name: adi_monitor
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"     # 只绑回环：Docker 会绕过 ufw，不能靠主机防火墙；页面走 SSH 隧道
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1
       - SCHEDULER_ENABLED=1          # 云上常驻，开定时；本地调试关掉
+      - SCRAPE_ALLOWED=true          # 抓取闸门：只有云服务器是 true，本地 .env 写 false（见 app/core/guard.py）
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }

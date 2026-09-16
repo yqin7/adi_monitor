@@ -86,11 +86,20 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # 默认 10m：等任务空闲最多 10 分钟 + pull + up 会被掐掉，表现为部署失败但旧镜像仍在跑
+          command_timeout: 30m
           script: |
             set -e
             cd /opt/adi_monitor
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose -f docker-compose.prod.yml pull
+            # 正在跑的抓取/得物任务别被重启打断：最多等 10 分钟
+            for i in $(seq 1 60); do
+              curl -sf localhost:8080/jobs/status | grep -q '"idle":false' || break
+              echo "有任务在运行，已等待 $((i*10))s…"
+              sleep 10
+            done
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker image prune -f
+            docker logout ghcr.io   # 工作流的 token 随 run 过期，别留一份失效凭证在机器上
             sleep 15 && curl -fsS http://localhost:8080/health

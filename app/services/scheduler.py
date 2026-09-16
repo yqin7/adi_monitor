@@ -50,6 +50,9 @@ def _sites() -> list[str]:
     return raw or ALL_SITES
 
 
+MAX_JOB_HOURS = 6   # 全流程实测 < 1 小时；超过这个数只能是卡死（网络调用都有超时，罕见）
+
+
 def _run(name: str, **kwargs) -> None:
     """把一次定时触发交给 job_runner 执行。"""
     from app.api.jobs import JOBS, _make
@@ -57,9 +60,13 @@ def _run(name: str, **kwargs) -> None:
 
     if job_runner.is_busy():
         cur = job_runner.current()
-        logger.info("调度[%s]：已有任务在跑（%s），本轮跳过",
-                    name, cur.label if cur else "?")
-        return
+        if cur and job_runner.release_if_stuck(MAX_JOB_HOURS * 3600):
+            logger.error("调度[%s]：上一个任务「%s」已跑 %s 小时未结束，判定卡死并释放，本轮继续",
+                         name, cur.label, MAX_JOB_HOURS)
+        else:
+            logger.info("调度[%s]：已有任务在跑（%s），本轮跳过",
+                        name, cur.label if cur else "?")
+            return
 
     sites = kwargs.get("sites") or _sites()
     ok, msg = job_runner.start(

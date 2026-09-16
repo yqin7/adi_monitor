@@ -199,6 +199,12 @@ class SlackNotifier:
             ],
         }
 
+    def send_text(self, text: str) -> bool:
+        """发一条纯文本（抓取失败等运维告警用）。未配置 webhook 时静默返回 False。"""
+        if not self.enabled:
+            return False
+        return self._send_message({"text": text})
+
     def _send_message(self, message: Dict) -> bool:
         """通过 Webhook 发送消息到 Slack"""
         try:

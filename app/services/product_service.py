@@ -22,6 +22,8 @@ except Exception:
 
 
 def _get(url: str) -> dict:
+    from app.core.guard import assert_scrape_allowed
+    assert_scrape_allowed("Adidas 单品查询")
     resp = requests.get(url, impersonate=IMPERSONATE, timeout=15, proxies=PROXIES)
     resp.raise_for_status()
     return resp.json()
