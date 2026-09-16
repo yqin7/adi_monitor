@@ -521,9 +521,16 @@ def run_full_scan(
         }
     """
     def _report(stage: str, message: str):
+        # 两种回调都要接：/scan 传的是 (stage, message)，任务页 job.log 只收 (message)。
+        # 之前只按两参数调，job.log 每次 TypeError 被吞掉，任务页上美国站整段空白。
         if progress_cb:
             try:
                 progress_cb(stage, message)
+            except TypeError:
+                try:
+                    progress_cb(message)
+                except Exception:
+                    pass
             except Exception:
                 pass
         print(message, flush=True)
@@ -546,9 +553,9 @@ def run_full_scan(
     all_results: list[dict] = []
     for slug, extra, label, _ in cats:
         _report("plp", f"开始抓取分类: {label}")
-        all_results.extend(fetch_category(
-            session, resolved_build_id, slug, extra, label, plp_workers=plp_workers
-        ))
+        got = fetch_category(session, resolved_build_id, slug, extra, label, plp_workers=plp_workers)
+        all_results.extend(got)
+        _report("plp", f"  [{label}] 完成 {len(got)} 条")
         time.sleep(SLEEP_SEC * 2)
 
     if FAILED_PAGES:
