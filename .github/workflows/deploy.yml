@@ -1,0 +1,84 @@
+# push 到 main：测试 -> 构建镜像推 GHCR -> SSH 到服务器拉起
+# 需要在仓库 Settings -> Secrets and variables -> Actions 里配：
+#   DEWU_MONITOR_TOKEN  fine-grained PAT，只给 yqin7/dewu-monitor 的 Contents: Read（构建时装私有依赖）
+#   DEPLOY_HOST         服务器公网 IP / 域名
+#   DEPLOY_USER         SSH 用户（要能跑 docker）
+#   DEPLOY_SSH_KEY      该用户的 SSH 私钥（整段，含 BEGIN/END）
+# 服务器上只需：装好 Docker + compose 插件，/opt/adi_monitor 下放 docker-compose.prod.yml 和 .env
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      # 单测是纯函数，不需要 dewu-client 和 MongoDB；跳过私有依赖那一行
+      - run: grep -v "dewu-client" requirements.txt > /tmp/req.txt && pip install -r /tmp/req.txt pytest
+      - run: python -m pytest tests -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      - name: write build secret
+        run: printf '%s' "${{ secrets.DEWU_MONITOR_TOKEN }}" > /tmp/gh_token
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
+          secret-files: gh_token=/tmp/gh_token
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    steps:
+      # 没配服务器 secrets 时（比如还没买机器）跳过，测试和构建照常跑
+      - if: env.DEPLOY_HOST != ''
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/adi_monitor
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -f
+            sleep 15 && curl -fsS http://localhost:8080/health

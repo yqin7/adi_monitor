@@ -1,26 +1,30 @@
-# 构建镜像
+# syntax=docker/dockerfile:1.7
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
-    curl \
+# git：requirements 里的 dewu-client 是私有 GitHub 仓库，pip 要 clone
+# curl：HEALTHCHECK 用
+RUN apt-get update && apt-get install -y --no-install-recommends git curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# 私有仓库凭证走 BuildKit secret：只在这一层可见，不进镜像、不进历史。
+#   本地：docker build --secret id=gh_token,src=<含 token 的文件> .
+#   CI：  见 .github/workflows/deploy.yml
+# token 用 GitHub fine-grained PAT，只给 yqin7/dewu-monitor 的 Contents: Read。
+RUN --mount=type=secret,id=gh_token \
+    if [ -s /run/secrets/gh_token ]; then \
+      git config --global url."https://x-access-token:$(cat /run/secrets/gh_token)@github.com/".insteadOf "https://github.com/"; \
+    fi \
+    && pip install --no-cache-dir -r requirements.txt \
+    && rm -f /root/.gitconfig
 
-# 复制应用代码
 COPY . .
 
-# 暴露端口
 EXPOSE 8080
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# 启动应用
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

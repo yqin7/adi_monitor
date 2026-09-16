@@ -22,6 +22,35 @@ Slack Webhook (发送通知)
 - ✅ 观察列表管理（REST API）
 - ✅ 完整的通知历史记录
 
+## GitHub Actions 自动部署（推荐）
+
+push 到 `main` 后自动：跑测试 → 构建镜像推到 GHCR（`ghcr.io/yqin7/adi_monitor`）→ SSH 到服务器拉起。
+流程在 `.github/workflows/deploy.yml`，不依赖具体云厂商，一台装了 Docker 的机器即可。
+
+### 一次性准备
+
+1. **服务器**（阿里云 / 火山引擎 / AWS 都行）：固定公网 IP（得物 POIZON 有 IP 白名单，出口 IP 要加进去）；装 Docker 与 compose 插件；
+   建目录 `/opt/adi_monitor`，放入本仓库的 `docker-compose.prod.yml` 和一份 `.env`（按 `.env.example` 填 `MONGODB_URI`、`DEWU_INTL_APP_KEY/SECRET`、Slack）。
+   Atlas 的 Network Access 也要加这台机器的 IP。
+2. **GitHub Secrets**（仓库 Settings → Secrets and variables → Actions）：
+
+   | Secret | 内容 |
+   |---|---|
+   | `DEWU_MONITOR_TOKEN` | fine-grained PAT，仅授权 `yqin7/dewu-monitor` 的 Contents: Read（构建镜像时安装私有依赖） |
+   | `DEPLOY_HOST` | 服务器 IP / 域名 |
+   | `DEPLOY_USER` | SSH 用户，需在 docker 组 |
+   | `DEPLOY_SSH_KEY` | 该用户的 SSH 私钥全文 |
+
+   前三步没配 `DEPLOY_*` 时，测试和构建照常跑、只跳过部署，可以先把镜像流水线跑通再买机器。
+3. GHCR 镜像默认私有，服务器拉取用的是工作流的 `GITHUB_TOKEN`，不用另配。
+
+### 本地构建镜像
+
+```bash
+printf '%s' "$GITHUB_PAT" > /tmp/gh_token
+DOCKER_BUILDKIT=1 docker build --secret id=gh_token,src=/tmp/gh_token -t adi_monitor .
+```
+
 ## 快速开始
 
 ### 1. Docker 部署

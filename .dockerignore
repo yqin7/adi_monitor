@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+.env
+.env.*
+!.env.example
+.DS_Store
+__pycache__
+*.pyc
+.build_id_cache
+.claude
+.idea
+tests
+result
+logs
+*.log
+backup

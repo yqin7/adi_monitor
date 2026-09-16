@@ -13,4 +13,5 @@ apscheduler>=3.10,<4
 # 钉 tag 不钉分支：函数签名一变 batch_price 会直接失败，而调用点包在重试里很难定位。
 # 升级流程：dewu-monitor 改完打新 tag → 这里改 tag → pip install -r requirements.txt
 # 本地开发想改到即生效：pip install -e ../dewu-monitor（覆盖这一行的安装）
-dewu-client @ git+ssh://git@github.com/yqin7/dewu-monitor.git@v1.0.0
+# 本地没有 GitHub token 时 https 装不上，可临时改用 git+ssh://git@github.com/... 同一 tag
+dewu-client @ git+https://github.com/yqin7/dewu-monitor.git@v1.0.0

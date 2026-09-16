@@ -1,0 +1,16 @@
+# 服务器上用的 compose：不在本机构建，直接拉 CI 推到 GHCR 的镜像。
+# 放到服务器 /opt/adi_monitor/docker-compose.prod.yml，旁边放 .env（参考 .env.example）。
+services:
+  app:
+    image: ghcr.io/yqin7/adi_monitor:latest
+    container_name: adi_monitor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SCHEDULER_ENABLED=1          # 云上常驻，开定时；本地调试关掉
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
