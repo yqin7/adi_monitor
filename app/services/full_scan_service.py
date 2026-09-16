@@ -61,6 +61,8 @@ def make_session(config: dict | None = None) -> cf_requests.Session:
     proxy.enabled = false -> 真正直连（默认忽略 HTTP_PROXY 等环境变量；
                              想沿用系统代理设 proxy.use_env_proxy: true）
     """
+    from app.core.guard import assert_scrape_allowed
+    assert_scrape_allowed("Adidas 抓取会话")
     cfg = config if config is not None else load_config()
     if proxy_enabled(cfg):
         session = cf_requests.Session(trust_env=False)

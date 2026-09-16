@@ -19,6 +19,8 @@ from typing import Any, Callable
 # 不在模块顶层 import：app.main 启动就会连带导入本模块，缺这个依赖时
 # 整个服务起不来 —— 而只有得物相关的任务真正需要它，比价页读库就能跑。
 def _dc():
+    from app.core.guard import assert_scrape_allowed
+    assert_scrape_allowed("得物接口调用")
     try:
         import dewu_client as dc
         return dc

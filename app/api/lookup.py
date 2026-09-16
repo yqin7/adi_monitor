@@ -69,6 +69,8 @@ def _one(db, sku: str, live: bool) -> dict[str, Any]:
     dewu: dict[str, Any] = {"found": False, "source": None, "sizes": []}
     if live:
         try:
+            from app.core.guard import assert_scrape_allowed
+            assert_scrape_allowed("得物实时查询")
             import dewu_client as dc
             dc.load_env()
             r = dc.query_article_full(sku) or {}

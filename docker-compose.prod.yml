@@ -11,6 +11,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - SCHEDULER_ENABLED=1          # 云上常驻，开定时；本地调试关掉
+      - SCRAPE_ALLOWED=true          # 抓取闸门：只有云服务器是 true，本地 .env 写 false（见 app/core/guard.py）
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "5" }

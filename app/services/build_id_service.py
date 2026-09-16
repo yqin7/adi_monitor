@@ -97,6 +97,8 @@ def _try_common_interactions(page, timeout_ms: int) -> None:
 
 
 def discover_from_page(url: str, timeout_ms: int, headed: bool) -> str | None:
+    from app.core.guard import assert_scrape_allowed
+    assert_scrape_allowed("Adidas buildId 探测")
     seen_candidates: list[str] = []
 
     with sync_playwright() as p:

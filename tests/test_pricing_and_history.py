@@ -122,3 +122,26 @@ def test_is_delisted_uses_site_latest_scan_with_grace():
     assert not is_delisted({"updated_at": latest - DELISTED_AFTER + timedelta(minutes=1)}, latest)
     assert not is_delisted({"updated_at": None}, latest) and not is_delisted({"updated_at": latest}, None)
     assert is_delisted({"updated_at": datetime(2026, 9, 8, tzinfo=timezone.utc)}, latest)  # aware 也行
+
+
+def test_scrape_guard_blocks_without_env(monkeypatch):
+    from app.core.guard import ScrapeNotAllowed, assert_scrape_allowed, scrape_allowed
+    monkeypatch.delenv("SCRAPE_ALLOWED", raising=False)
+    assert not scrape_allowed()
+    import pytest
+    with pytest.raises(ScrapeNotAllowed):
+        assert_scrape_allowed("x")
+    for bad in ("0", "false", ""):
+        monkeypatch.setenv("SCRAPE_ALLOWED", bad)
+        assert not scrape_allowed()
+    monkeypatch.setenv("SCRAPE_ALLOWED", "1")
+    assert_scrape_allowed("x")
+
+
+def test_make_session_is_guarded(monkeypatch):
+    from app.core.guard import ScrapeNotAllowed
+    from app.services.full_scan_service import make_session
+    monkeypatch.delenv("SCRAPE_ALLOWED", raising=False)
+    import pytest
+    with pytest.raises(ScrapeNotAllowed):
+        make_session({})

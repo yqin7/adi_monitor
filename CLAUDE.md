@@ -9,6 +9,7 @@
 - 直接 import 并调用 `full_scan_service` / `adidas_intl_service` / `us_sizes_service` / `arbitrage_service.refresh_quotes`
 - 用 curl / curl_cffi / requests 直接请求 `adidas.*` 或 `open.poizon.com`（"测一下代理通不通"也不行）
 - 本地起服务时开启 `SCHEDULER_ENABLED`
+- 把本地 `.env` 的 `SCRAPE_ALLOWED` 改成 true（代码闸门 `app/core/guard.py`：不是 true 就拒绝所有抓取入口）
 
 原因：抓取必须走固定的美国住宅代理和已加白名单的服务器 IP；本地跑会用本机 IP 触发 Adidas 风控、绕过得物 IP 白名单，并且和云上服务写同一个 Atlas 库互相覆盖。
 
