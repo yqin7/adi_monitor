@@ -207,3 +207,33 @@ def in_stock(dewu_size: str, available: Iterable[str], tolerance_mm: int = 2) ->
     if normalize(dewu_size) is None or not any(normalize(a) for a in avail):
         return None
     return False
+
+
+# ── 尺码表故障探测 ─────────────────────────────────────────────────────────
+# 2026-09-16 06:29–10:10（UTC）Adidas 美国站 taxonomy 接口约 4 小时返回的是「这款有哪些码」
+# 而不是「哪些码有货」：IH7830 从 2 个码变成 3.5–19 全部 27 个，全站 4412 个商品尺码剧变。
+# 之后自己恢复。单看一条分不清，但一轮里大量商品尺码数同时翻几倍，只可能是接口故障。
+# 参数用 9/16 真实数据回放选定：故障轮 18.8% vs 恢复轮 0.2%（factor=3/min=10 时是 10.9% vs 0.1%，余量偏小）
+BALLOON_FACTOR = 2        # 新尺码数 >= 旧的 2 倍
+BALLOON_MIN = 8           # 且新尺码数 >= 8（小范围补货不算）
+BALLOON_SHARE = 0.08      # 可比商品里超过 8% 出现这种膨胀 -> 判定本轮是尺码表
+
+
+def detect_size_table_mode(new_sizes: dict, old_sizes: dict) -> dict:
+    """new_sizes / old_sizes: {sku: [sizes]}。只比较两边都有且旧的非空的商品。
+
+    返回 {"compared", "ballooned", "share", "is_table"}；is_table=True 表示本轮数据不可信。
+    """
+    compared = ballooned = 0
+    for sku, new in new_sizes.items():
+        old = old_sizes.get(sku)
+        if not old:
+            continue
+        compared += 1
+        n_new, n_old = len(new or []), len(old)
+        if n_new >= BALLOON_MIN and n_new >= BALLOON_FACTOR * n_old:
+            ballooned += 1
+    share = (ballooned / compared) if compared else 0.0
+    # 可比样本太少时不下结论（新站首轮、单分类扫描）
+    is_table = compared >= 200 and share >= BALLOON_SHARE
+    return {"compared": compared, "ballooned": ballooned, "share": share, "is_table": is_table}

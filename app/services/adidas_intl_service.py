@@ -214,6 +214,18 @@ def run_site_scan(site: str, category: str | None = None,
     batch_id = f"{site}_price_{ts}"
     conn = MongoConnection.from_environment(required=True)
     try:
+        # 尺码表故障探测（与美国站同一套）：命中则本轮只写价格，不碰尺码和尺码快照
+        from app.core.sizing import detect_size_table_mode
+        old_sizes = {d["sku"]: d.get("available_sizes") for d in conn.db["products"].find(
+            {"site": site, "sku": {"$in": [x["sku"] for x in deduped]}}, {"sku": 1, "available_sizes": 1})}
+        chk = detect_size_table_mode({x["sku"]: x.get("available_sizes") for x in deduped}, old_sizes)
+        sizes_ok = not chk["is_table"]
+        if not sizes_ok:
+            msg = (f"[{label_cn}] 尺码抓取异常：{chk['ballooned']}/{chk['compared']} 个商品尺码数突然翻倍以上"
+                   f"（{chk['share']:.0%}），接口疑似在返回尺码表而非库存。本轮只写价格，尺码保留原有数据。")
+            report(msg); log.error(msg)
+            for x in deduped:
+                x.pop("available_sizes", None); x.pop("sizes_updated_at", None)
         stat = ProductDAO(conn.db).upsert_products(
             deduped, source_file=batch_id,
             include_sizes=False, record_price_history=True)
@@ -222,7 +234,7 @@ def run_site_scan(site: str, category: str | None = None,
         from app.dao.size_history_dao import SizeHistoryDAO
         # 不能只收「有尺码」的：整只断码（available_sizes 变空）的商品被滤掉后，
         # record_changes 根本看不到它，旧快照会一直宣称有货。空列表才是信号本身。
-        sizes_map = {x["sku"]: (x.get("available_sizes") or []) for x in deduped}
+        sizes_map = {x["sku"]: (x.get("available_sizes") or []) for x in deduped} if sizes_ok else {}
         diff = {"new_in_stock": {}, "went_out_of_stock": {}}
         if sizes_map:
             sh = SizeHistoryDAO(conn.db)
