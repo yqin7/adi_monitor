@@ -186,10 +186,12 @@ def run_site_scan(site: str, category: str | None = None,
         _scope["category"] = category
     prev = _conn.db["products"].count_documents(_scope)
     ratio = (len(deduped) / prev) if prev else 1.0
-    if deduped and not any(x.get("available_sizes") for x in deduped):
-        # 尺码按 orderable 清空；全站一个尺码都没有只能是接口字段变了，别把库里尺码清光
-        msg = (f"[{label_cn}] 【抓取异常】{len(deduped)} 个 SKU 全部无尺码，疑似接口字段变化"
-               f"（orderable / availableSizes）。已放弃写库，保留原有数据。")
+    # 尺码按 orderable 清空；一个「以前有尺码」的站这轮一个尺码都没有，只能是接口字段变了，
+    # 别把库里尺码清光。加拿大站接口本来就不给尺码（库里 0%），不能拿这条误伤它的价格写入。
+    prev_with_sizes = _conn.db["products"].count_documents({**_scope, "available_sizes.0": {"$exists": True}})
+    if deduped and prev_with_sizes > 0 and not any(x.get("available_sizes") for x in deduped):
+        msg = (f"[{label_cn}] 【抓取异常】{len(deduped)} 个 SKU 全部无尺码（库里原有 {prev_with_sizes} 个带尺码），"
+               f"疑似接口字段变化（orderable / availableSizes）。已放弃写库，保留原有数据。")
         report(msg)
         log.error(msg)
         return {"site": site, "total": len(deduped), "discounted": 0,
