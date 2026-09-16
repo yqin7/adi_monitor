@@ -111,7 +111,9 @@ def build_proxy_url(proxy_cfg: Dict[str, Any]) -> str | None:
 
     auth = ""
     if username:
-        auth = f"{username}:{password}@" if password else f"{username}@"
+        from urllib.parse import quote
+        u, pw = quote(str(username), safe=""), quote(str(password or ""), safe="")
+        auth = f"{u}:{pw}@" if password else f"{u}@"
 
     return f"{protocol}://{auth}{host}:{port}"
 

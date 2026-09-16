@@ -6,7 +6,7 @@ services:
     container_name: adi_monitor
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"     # 只绑回环：Docker 会绕过 ufw，不能靠主机防火墙；页面走 SSH 隧道
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1

@@ -110,21 +110,34 @@ def _make(name: str, sites: list[str], limit: int | None, market: str,
                 conn.close()
 
         def scan_adidas():
+            failed_sites = []
             for site in sites:
                 if stop():
                     log("已请求停止，跳过剩余站点")
                     break
-                if site == "us":
-                    log("=== 🇺🇸 美国站：抓取 SKU ===")
-                    out["us"] = run_full_scan(include_sizes=False, progress_cb=log)
-                    notify("us", out["us"])              # 新品来自价格扫描
-                    log("=== 🇺🇸 美国站：补全尺码 ===")
-                    out["us_sizes"] = us_sizes_service.run(progress=log)
-                    notify("us", out["us_sizes"])        # 补货来自尺码扫描
-                else:
-                    log(f"=== {site.upper()} 站抓取 ===")
-                    out[site] = adidas_intl_service.run_site_scan(site, progress=log)
-                    notify(site, out[site])              # 国际站一次抓取兼得两类信号
+                # 一个站抛异常（比如美国站 buildId 探测失败）不能让后面几个站整小时不扫
+                try:
+                    if site == "us":
+                        log("=== 🇺🇸 美国站：抓取 SKU ===")
+                        out["us"] = run_full_scan(include_sizes=False, progress_cb=log)
+                        notify("us", out["us"])              # 新品来自价格扫描
+                        log("=== 🇺🇸 美国站：补全尺码 ===")
+                        out["us_sizes"] = us_sizes_service.run(progress=log)
+                        notify("us", out["us_sizes"])        # 补货来自尺码扫描
+                    else:
+                        log(f"=== {site.upper()} 站抓取 ===")
+                        out[site] = adidas_intl_service.run_site_scan(site, progress=log)
+                        notify(site, out[site])              # 国际站一次抓取兼得两类信号
+                except Exception as exc:
+                    failed_sites.append(site)
+                    out[site] = {"healthy": False, "error": f"{type(exc).__name__}: {exc}"}
+                    log(f"  【{site.upper()} 站失败】{type(exc).__name__}: {str(exc)[:300]}，继续下一站")
+                    logger.exception("站点 %s 抓取失败", site)
+            if failed_sites:
+                # 全部失败才算任务失败；部分失败记在结果里，任务状态仍为完成
+                out["failed_sites"] = failed_sites
+                if len(failed_sites) == len(sites):
+                    raise RuntimeError(f"所有站点抓取失败：{','.join(failed_sites)}")
 
         if name == "adidas":
             scan_adidas()
