@@ -67,7 +67,16 @@ jobs:
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
     steps:
+      - uses: actions/checkout@v4
       # 没配服务器 secrets 时（比如还没买机器）跳过，测试和构建照常跑
+      - if: env.DEPLOY_HOST != ''
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: docker-compose.prod.yml
+          target: /opt/adi_monitor
       - if: env.DEPLOY_HOST != ''
         uses: appleboy/ssh-action@v1.2.0
         with:

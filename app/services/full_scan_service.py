@@ -12,6 +12,7 @@ from curl_cffi import requests as cf_requests
 from app.core.config import (
     load_config,
     get_requests_proxies,
+    mask_proxy_url,
     proxy_enabled,
     use_env_proxy,
 )
@@ -64,7 +65,7 @@ def make_session(config: dict | None = None) -> cf_requests.Session:
     if proxy_enabled(cfg):
         session = cf_requests.Session(trust_env=False)
         session.proxies = get_requests_proxies(cfg)
-        print(f"代理：已启用 -> {session.proxies['https']}", flush=True)
+        print(f"代理：已启用 -> {mask_proxy_url(session.proxies['https'])}", flush=True)
     elif use_env_proxy(cfg):
         session = cf_requests.Session(trust_env=True)
         print("代理：未配置，沿用系统环境变量代理", flush=True)

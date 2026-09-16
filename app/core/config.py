@@ -84,9 +84,16 @@ def get_proxy_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return config.get("proxy", {})
 
 
+def _truthy(v: Any) -> bool:
+    """配置值可能来自环境变量字符串："0"/"false"/"" 都要当关。"""
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "yes", "on")
+    return bool(v)
+
+
 def build_proxy_url(proxy_cfg: Dict[str, Any]) -> str | None:
     """根据代理配置构造代理 URL，未启用或缺少 host/port 时返回 None"""
-    if not proxy_cfg or not proxy_cfg.get("enabled"):
+    if not proxy_cfg or not _truthy(proxy_cfg.get("enabled")):
         return None
 
     host = proxy_cfg.get("host")
@@ -124,13 +131,20 @@ def use_env_proxy(config: Dict[str, Any]) -> bool:
     默认 False —— 关掉开关就是真的直连，不会被系统代理悄悄接管。
     需要沿用系统代理时在 config.yaml 里设 proxy.use_env_proxy: true。
     """
-    return bool(get_proxy_config(config).get("use_env_proxy", False))
+    return _truthy(get_proxy_config(config).get("use_env_proxy", False))
+
+
+def mask_proxy_url(url: str | None) -> str | None:
+    """日志用：把 user:pass@ 里的密码遮掉"""
+    if not url:
+        return url
+    return re.sub(r"://([^:@/]+):[^@/]*@", r"://\1:***@", url)
 
 
 def get_playwright_proxy(config: Dict[str, Any]) -> Dict[str, str] | None:
     """构造 Playwright 风格的 proxy 参数，未启用时返回 None"""
     proxy_cfg = get_proxy_config(config)
-    if not proxy_cfg or not proxy_cfg.get("enabled"):
+    if not proxy_cfg or not _truthy(proxy_cfg.get("enabled")):
         return None
 
     host = proxy_cfg.get("host")

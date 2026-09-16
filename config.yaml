@@ -25,14 +25,16 @@ app:
   log_level: "INFO"           # 日志级别
 
 # 代理配置（用于绕过 IP 限制/反爬）
+# 账号密码不进仓库：全部从 .env 读（见 .env.example 的 PROXY_*）。
+# 只影响 Adidas 官网抓取；得物接口和 MongoDB 始终直连，白名单填服务器自己的 IP。
 proxy:
-  enabled: false               # 是否启用代理
-  protocol: "http"             # http / https / socks5
-  host: ""                     # 代理服务器 IP 或域名
-  port: 0                      # 代理服务器端口
-  username: ""                 # 代理认证用户名（可选）
-  password: ""                 # 代理认证密码（可选）
-  use_env_proxy: false         # enabled=false 时是否仍沿用系统 HTTP_PROXY/HTTPS_PROXY
+  enabled: "${PROXY_ENABLED}"  # 1/true 启用；留空或 0/false 直连
+  protocol: "${PROXY_PROTOCOL}"  # http / https / socks5，留空按 http
+  host: "${PROXY_HOST}"
+  port: "${PROXY_PORT}"
+  username: "${PROXY_USERNAME}"
+  password: "${PROXY_PASSWORD}"
+  use_env_proxy: false         # enabled 关着时是否仍沿用系统 HTTP_PROXY/HTTPS_PROXY
                                # 默认 false = 本地测试真正直连，不被系统代理接管
 
 # Slack 通知配置
