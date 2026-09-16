@@ -97,7 +97,9 @@ def parse_item(it: dict, category: str, site: str) -> dict | None:
 
     link = it.get("link") or ""
     url = (f"https://{host}" + link) if link.startswith("/") else link
-    sizes = [s for s in (it.get("availableSizes") or []) if s and str(s).lower() != "hidden"]
+    # availableSizes 是尺码范围，orderable=0 的售罄商品照样列全，得按 orderable 清空
+    sizes = ([s for s in (it.get("availableSizes") or []) if s and str(s).lower() != "hidden"]
+             if it.get("orderable") else [])
     _now = datetime.utcnow()
 
     return {

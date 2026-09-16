@@ -87,7 +87,9 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
                 # 空列表也要收：整只断码的商品若被滤掉，旧 available_sizes
                 # 永远不清、record_changes 也看不到它，断码永远报不出来。
                 if sku:
-                    collected[sku] = _clean_sizes(it.get("availableSizes"))
+                    # availableSizes 是「这款有哪些码」，不是「哪些码有货」：
+                    # orderable=0 的售罄商品照样列全部尺码（IJ7058 售罄仍列 9 个码）。
+                    collected[sku] = _clean_sizes(it.get("availableSizes")) if it.get("orderable") else []
 
         absorb(first)
         starts = [p * PAGE_SIZE for p in range(1, pages)]

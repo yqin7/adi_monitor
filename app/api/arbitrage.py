@@ -352,7 +352,9 @@ def raw(site: str = Query("us", description="us 美国 | kr 韩国 | jp 日本 |
             rows.append({
                 "sku": sku, "size": sz.get("size"),
                 # 该尺码 Adidas 侧是否有货：True/False，拿不到尺码时为 None（未知）
-                "in_stock": None if delisted else in_stock(sz.get("size"), p.get("available_sizes")),
+                # 售罄（列表页 orderable=0）时尺码接口仍会列全尺码，以商品级 is_sold_out 为准
+                "in_stock": None if delisted else (False if p.get("is_sold_out") else
+                                                   in_stock(sz.get("size"), p.get("available_sizes"))),
                 # 得物接口返回的就是【香港报价】，结算单位人民币(RMB)。
                 # 国内报价 = 香港报价 × 1.09（电商税），由前端换算。
                 "dewu_price": price,

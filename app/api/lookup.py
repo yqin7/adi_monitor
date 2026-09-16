@@ -56,8 +56,9 @@ def _one(db, sku: str, live: bool) -> dict[str, Any]:
             "discount_pct": d.get("discount_pct"),
             "promo_code": d.get("promo_code"), "promo_rate": d.get("promo_rate"),
             "is_sold_out": d.get("is_sold_out", False),
-            "available_sizes": d.get("available_sizes") or [],
-            "size_count": len(d.get("available_sizes") or []),
+            # 售罄时 available_sizes 只是尺码范围，对外一律按 0 个可售
+            "available_sizes": [] if d.get("is_sold_out") else (d.get("available_sizes") or []),
+            "size_count": 0 if d.get("is_sold_out") else len(d.get("available_sizes") or []),
             # 时间：判断这条数据还能不能信
             "scraped_at": _iso(d.get("updated_at") or d.get("scraped_at")),
             "sizes_at": _iso(d.get("sizes_updated_at")),
@@ -94,6 +95,8 @@ def _one(db, sku: str, live: bool) -> dict[str, Any]:
         avail = {}
         for x in sites:
             st = in_stock(size, x["available_sizes"]) if x["available_sizes"] else None
+            if x["is_sold_out"]:
+                st = False          # 售罄商品的 available_sizes 是尺码范围，不是库存
             avail[x["site"]] = None if x["delisted"] else st
         matrix.append({
             "size": size,
