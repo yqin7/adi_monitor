@@ -1,4 +1,5 @@
-# push 到 main：测试 -> 构建镜像推 GHCR -> SSH 到服务器拉起
+# 发布流程：功能分支合并到 main 后，从 main 切 release-x.y.z 分支推上来才部署。
+# push 到 main 本身不部署。流水线：测试 -> 构建镜像推 GHCR -> SSH 到服务器拉起
 # 需要在仓库 Settings -> Secrets and variables -> Actions 里配：
 #   DEWU_MONITOR_TOKEN  fine-grained PAT，只给 yqin7/dewu-monitor 的 Contents: Read（构建时装私有依赖）
 #   DEPLOY_HOST         服务器公网 IP / 域名
@@ -9,7 +10,7 @@ name: deploy
 
 on:
   push:
-    branches: [main]
+    branches: ["release-*"]
   workflow_dispatch:
 
 env:
@@ -46,6 +47,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: meta
         run: echo "tag=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+      # 镜像同时打三个标签：latest（服务器 compose 用）、release 分支名、commit 短哈希（回滚用）
       - name: write build secret
         run: printf '%s' "${{ secrets.DEWU_MONITOR_TOKEN }}" > /tmp/gh_token
       - uses: docker/build-push-action@v6
@@ -54,6 +56,7 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.ref_name }}
             ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
           secret-files: gh_token=/tmp/gh_token
           cache-from: type=gha

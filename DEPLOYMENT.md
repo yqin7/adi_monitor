@@ -24,7 +24,13 @@ Slack Webhook (发送通知)
 
 ## GitHub Actions 自动部署（推荐）
 
-push 到 `main` 后自动：跑测试 → 构建镜像推到 GHCR（`ghcr.io/yqin7/adi_monitor`）→ SSH 到服务器拉起。
+发布流程：功能分支合并到 `main` → 本地拉取 `main` → 从 `main` 切 `release-x.y.z` 分支推上去 → 自动：跑测试 → 构建镜像推到 GHCR（`ghcr.io/yqin7/adi_monitor`，标签 `latest` / `release-x.y.z` / 短哈希）→ SSH 到服务器拉起。push 到 `main` 本身不部署。
+
+```bash
+git checkout main && git pull
+git checkout -b release-1.0.0
+git push -u origin release-1.0.0      # 触发部署
+```
 流程在 `.github/workflows/deploy.yml`，不依赖具体云厂商，一台装了 Docker 的机器即可。
 
 ### 一次性准备
