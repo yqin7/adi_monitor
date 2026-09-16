@@ -11,8 +11,16 @@
     所以尺码可以用这个接口按分类批量补，无需逐 SKU 请求。
 
 写入：
-    products.available_sizes（与韩国站同字段），按 (sku, site='us') 更新。
-    尺码格式为美码，如 "M 10 / W 11"、"XL"，由 app.core.sizing 归一后与得物比对。
+    products.size_range（这款有哪些码），按 (sku, site='us') 更新。
+    尺码格式为美码，如 "M 10 / W 11"、"XL"。
+
+【2026-09-16 起不再写 available_sizes】
+    从美国出口（云服务器，走不走美国住宅代理都一样）请求这个接口，availableSizes 返回的是
+    尺码范围而不是库存：IH7830 从 M 3.5 到 M 19 全部 27 个码都"可售"，9/15 从国内出口
+    拿到的是 4 个码。全站对比：超过 15 个码的快照占比从 4% 跳到 27%，英/日站没变。
+    逐商品的 /api/products/{sku}/availability 从服务器出去被 Akamai 403。
+    所以美国站逐尺码库存目前没有可信来源：只存尺码范围，库存置为未知（前端显示 —），
+    不做补货/断码判断。商品级 is_sold_out 来自 PLP 价格接口，仍可信。
 """
 from __future__ import annotations
 
@@ -58,7 +66,7 @@ def _clean_sizes(raw: list | None) -> list[str]:
 
 
 def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
-    """按分类拉取美国站尺码，批量写入 products.available_sizes。"""
+    """按分类拉取美国站尺码范围，写入 products.size_range；库存未知，不写 available_sizes。"""
     def report(msg: str) -> None:
         log.info(msg)
         if progress:
@@ -99,7 +107,8 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
         report(f"  [{slug}] 累计 {len(collected)} 个 SKU")
 
     # 与国际站同一套健康门槛：抓崩了要明确报错，不能安静返回 0
-    prev = prod.count_documents({"site": "us", "available_sizes": {"$exists": True}})
+    prev = prod.count_documents({"site": "us", "size_range": {"$exists": True}}) \
+        or prod.count_documents({"site": "us", "available_sizes": {"$exists": True}})
     ratio = (len(collected) / prev) if prev else 1.0
     with_sizes = sum(1 for v in collected.values() if v)
     if not collected or (prev and ratio < 0.6):
@@ -119,24 +128,17 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
         return {"skus": len(collected), "updated": 0, "healthy": False,
                 "error": msg, "restock": {}, "out_of_stock": {}}
 
-    # 尺码与价格是两次独立抓取（价格走 PLP，尺码走 taxonomy），
-    # 所以单独记时间，前端才能分辨「价格新但尺码旧」这种情况。
+    # 只写尺码范围。available_sizes / sizes_updated_at 不动（见模块说明），
+    # 库存对前端就是未知；也不写 size_history，否则补货/断码全是假信号。
     now = datetime.utcnow()
     ops = [UpdateOne({"sku": sku, "site": "us"},
-                     {"$set": {"available_sizes": sizes,
-                               "sizes_updated_at": now}})
+                     {"$set": {"size_range": sizes, "size_range_updated_at": now}})
            for sku, sizes in collected.items()]
     written = 0
     for i in range(0, len(ops), 2000):
         res = prod.bulk_write(ops[i:i + 2000], ordered=False)
         written += res.modified_count
-
-    # 记录尺码快照，供补货/断码检测
-    from app.dao.size_history_dao import SizeHistoryDAO
-    sh = SizeHistoryDAO(conn.db)
-    sh.ensure_indexes()
-    diff = sh.record_changes("us", collected,
-                             batch_id=datetime.now().strftime("us_sizes_%Y%m%d_%H%M%S"))
+    diff = {"new_in_stock": {}, "went_out_of_stock": {}}
 
     from app.dao.unparsed_size_dao import UnparsedSizeDAO
     usd = UnparsedSizeDAO(conn.db)
@@ -147,8 +149,8 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
         report(f"发现 {len(unparsed['new'])} 种新的尺码写法："
                f"{', '.join(repr(x) for x in unparsed['new'][:5])}"
                f"{' …' if len(unparsed['new']) > 5 else ''}")
-    report(f"美国站尺码补全完成：{len(collected)} 个 SKU，更新 {written} 条；"
-           f"补货 {len(diff['new_in_stock'])} 个，断码 {len(diff['went_out_of_stock'])} 个")
+    report(f"美国站尺码范围更新：{len(collected)} 个 SKU，更新 {written} 条"
+           f"（美国出口拿不到逐尺码库存，库存按未知处理，不做补货/断码判断）")
     return {"skus": len(collected), "updated": written, "healthy": True,
             "unparsed_sizes": unparsed["new"],
             "restock": diff["new_in_stock"], "out_of_stock": diff["went_out_of_stock"]}
