@@ -23,3 +23,6 @@ __pycache__/
 # 构建产物
 *.egg-info/
 /tmp/
+
+# 本地运维笔记（含服务器地址等，不进仓库）
+docs/*.local.md
