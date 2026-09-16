@@ -318,6 +318,18 @@ function applyHkCol() {
   const show = $('#showHk').value === '1';
   document.body.classList.toggle('hide-hk', !show);
   try { localStorage.setItem('show_hk', show ? '1' : '0'); } catch (e) {}
+  if (FX) renderFxInfo(FX);          // 香港列开关决定汇率栏要不要带 HKD
+}
+
+function renderFxInfo(d) {
+  const key = CFG[SITE].fxKey;
+  // 只显示当前站点的币种，别把五国汇率全堆上来；香港列打开时再补一条 HKD
+  const cur = key.split('_')[0].toUpperCase();
+  const hk = $('#showHk').value === '1' ? ` · HKD→CNY ${(d.usd_cny / d.usd_hkd).toFixed(4)}` : '';
+  const stale = d.stale_seconds ? `（${Math.round(d.stale_seconds / 60)} 分钟前的值）` : '';
+  $('#fxInfo').innerHTML = d.live
+    ? `${cur}→CNY ${d[key]}${hk} · ${d.source}${stale}<br>${(d.updated || '').slice(0, 25)}`
+    : `未取到实时汇率，使用配置值`;
 }
 
 /* ── 数据新鲜度 ─────────────────────────────────────────────────────
@@ -584,10 +596,7 @@ async function loadFx() {
     FX = d;
     const key = CFG[SITE].fxKey;
     if (d[key] != null) $('#fx').value = Number(d[key]).toFixed(6);
-    $('#fxInfo').innerHTML = d.live
-      ? `USD→CNY ${d.usd_cny} · HKD→CNY ${(d.usd_cny / d.usd_hkd).toFixed(4)}`
-        + ` · KRW→CNY ${d.krw_cny} · ${d.source}<br>${(d.updated || '').slice(0, 25)}`
-      : `未取到实时汇率，使用配置值`;
+    renderFxInfo(d);
   } catch (e) {
     // 别一律回落 7.12 —— 那是 USD→CNY，日元用它成本会虚高约 148 倍。
     // 按当前站点的币种给个数量级正确的兜底，并明确提示不可信。
