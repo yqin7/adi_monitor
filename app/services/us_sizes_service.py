@@ -119,6 +119,22 @@ def run(progress: Callable[[str], None] | None = None) -> dict[str, Any]:
         return {"skus": len(collected), "updated": 0, "healthy": False,
                 "error": msg, "restock": {}, "out_of_stock": {}}
 
+    # 尺码表故障探测：一轮里大量商品尺码数同时翻几倍，是接口在返回尺码表而不是库存，
+    # 这轮尺码整体作废，保留库里上一轮的真实数据（见 app/core/sizing.py 说明）
+    from app.core.sizing import detect_size_table_mode
+    old = {d["sku"]: d.get("available_sizes") for d in
+           prod.find({"site": "us", "sku": {"$in": list(collected)}}, {"sku": 1, "available_sizes": 1})}
+    chk = detect_size_table_mode(collected, old)
+    if chk["is_table"]:
+        msg = (f"美国站尺码抓取异常：{chk['ballooned']}/{chk['compared']} 个商品尺码数突然翻倍以上"
+               f"（{chk['share']:.0%}），接口疑似在返回尺码表而非库存。本轮尺码已放弃写库，保留原有数据。")
+        report(msg)
+        log.error(msg)
+        return {"skus": len(collected), "updated": 0, "healthy": False,
+                "error": msg, "restock": {}, "out_of_stock": {}}
+    if chk["compared"]:
+        report(f"  尺码表探测：{chk['ballooned']}/{chk['compared']} 膨胀（{chk['share']:.1%}），正常")
+
     # 尺码与价格是两次独立抓取（价格走 PLP，尺码走 taxonomy），
     # 所以单独记时间，前端才能分辨「价格新但尺码旧」这种情况。
     now = datetime.utcnow()

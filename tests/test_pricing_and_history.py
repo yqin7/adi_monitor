@@ -145,3 +145,36 @@ def test_make_session_is_guarded(monkeypatch):
     import pytest
     with pytest.raises(ScrapeNotAllowed):
         make_session({})
+
+
+def test_size_table_mode_detector():
+    from app.core.sizing import detect_size_table_mode
+    old = {f"S{i}": ["a", "b"] for i in range(300)}
+    # 正常轮次：少数商品补货到 4 个码
+    normal = {k: (["a", "b", "c", "d"] if i % 20 == 0 else v) for i, (k, v) in enumerate(old.items())}
+    assert not detect_size_table_mode(normal, old)["is_table"]
+    # 故障轮次：30% 商品从 2 个码变成 27 个
+    table = {k: ([f"s{j}" for j in range(27)] if i % 3 == 0 else v) for i, (k, v) in enumerate(old.items())}
+    r = detect_size_table_mode(table, old)
+    assert r["is_table"] and r["ballooned"] == 100 and r["compared"] == 300
+    # 样本太少不下结论
+    assert not detect_size_table_mode({"A": [f"s{j}" for j in range(27)]}, {"A": ["a"]})["is_table"]
+    # 旧数据为空的商品不参与比较（首轮 / 之前售罄）
+    assert detect_size_table_mode({"A": list("abcdefghijkl")}, {"A": []})["compared"] == 0
+    # 真实回放（2026-09-16 美国站）：故障轮 18.8% / 恢复轮 0.2%，阈值 8% 两边都有余量
+    from app.core.sizing import BALLOON_FACTOR, BALLOON_MIN, BALLOON_SHARE
+    assert (BALLOON_FACTOR, BALLOON_MIN, BALLOON_SHARE) == (2, 8, 0.08)
+
+
+def test_size_table_mode_boundaries():
+    from app.core.sizing import detect_size_table_mode
+    four = list("abcd")
+    def run(n_ballooned, n_total, new_len):
+        old = {f"S{i}": four for i in range(n_total)}
+        new = {k: ([f"s{j}" for j in range(new_len)] if i < n_ballooned else v) for i, (k, v) in enumerate(old.items())}
+        return detect_size_table_mode(new, old)
+    # 4 -> 8：刚好 2 倍且 >= 8，算膨胀；4 -> 7：不到 8，不算
+    assert run(1, 1, 8)["ballooned"] == 1 and run(1, 1, 7)["ballooned"] == 0
+    # 恰好 8% of 200 触发；199 个可比样本不下结论
+    assert run(16, 200, 27)["is_table"] and not run(15, 200, 27)["is_table"]
+    assert not run(40, 199, 27)["is_table"]
