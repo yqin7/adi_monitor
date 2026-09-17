@@ -164,3 +164,17 @@ def test_size_table_mode_detector():
     # 真实回放（2026-09-16 美国站）：故障轮 18.8% / 恢复轮 0.2%，阈值 8% 两边都有余量
     from app.core.sizing import BALLOON_FACTOR, BALLOON_MIN, BALLOON_SHARE
     assert (BALLOON_FACTOR, BALLOON_MIN, BALLOON_SHARE) == (2, 8, 0.08)
+
+
+def test_size_table_mode_boundaries():
+    from app.core.sizing import detect_size_table_mode
+    four = list("abcd")
+    def run(n_ballooned, n_total, new_len):
+        old = {f"S{i}": four for i in range(n_total)}
+        new = {k: ([f"s{j}" for j in range(new_len)] if i < n_ballooned else v) for i, (k, v) in enumerate(old.items())}
+        return detect_size_table_mode(new, old)
+    # 4 -> 8：刚好 2 倍且 >= 8，算膨胀；4 -> 7：不到 8，不算
+    assert run(1, 1, 8)["ballooned"] == 1 and run(1, 1, 7)["ballooned"] == 0
+    # 恰好 8% of 200 触发；199 个可比样本不下结论
+    assert run(16, 200, 27)["is_table"] and not run(15, 200, 27)["is_table"]
+    assert not run(40, 199, 27)["is_table"]

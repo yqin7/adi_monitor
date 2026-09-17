@@ -81,7 +81,7 @@ def fetch_page(session: cf_requests.Session, site: str, slug: str, start: int,
 
 
 def parse_item(it: dict, category: str, site: str) -> dict | None:
-    sku = (it.get("productId") or "").strip()
+    sku = (it.get("productId") or "").strip().upper()   # 库里的键是大写，探测器/尺码快照按它匹配
     if not sku:
         return None
     host, _, currency, _ = SITES[site]

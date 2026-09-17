@@ -223,6 +223,7 @@ def detect_size_table_mode(new_sizes: dict, old_sizes: dict) -> dict:
     """new_sizes / old_sizes: {sku: [sizes]}。只比较两边都有且旧的非空的商品。
 
     返回 {"compared", "ballooned", "share", "is_table"}；is_table=True 表示本轮数据不可信。
+    可比样本不足 200 时不下结论（单分类扫描、新站首轮拿不到保护，定时任务都是整站扫所以够用）。
     """
     compared = ballooned = 0
     for sku, new in new_sizes.items():
