@@ -12,6 +12,11 @@ services:
       # 不要绑 0.0.0.0：Docker 绕过 ufw，公网只靠安全组一道墙，且服务没有登录。
       - "${TAILSCALE_IP:-127.0.0.2}:8080:8080"
     env_file: .env
+    # 容器 DNS 固定用阿里云内网解析：Tailscale 会改宿主机 resolv.conf（MagicDNS 100.100.100.100），
+    # Docker 转发过去后容器里解析不到 Atlas 域名，服务起不来。显式指定后与 Tailscale 解耦。
+    dns:
+      - 100.100.2.136
+      - 100.100.2.138
     environment:
       - PYTHONUNBUFFERED=1
       - SCHEDULER_ENABLED=1          # 云上常驻，开定时；本地调试关掉
