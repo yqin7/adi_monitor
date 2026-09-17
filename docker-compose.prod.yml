@@ -6,7 +6,11 @@ services:
     container_name: adi_monitor
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"     # 只绑回环：Docker 会绕过 ufw，不能靠主机防火墙；页面走 SSH 隧道
+      - "127.0.0.1:8080:8080"     # 回环：部署脚本的健康检查用
+      # Tailscale 网卡：Mac/手机装了 Tailscale 后直接访问 http://100.x.x.x:8080/ui/，不走公网、不用隧道。
+      # 地址在服务器 .env 里配 TAILSCALE_IP；没配时退回 127.0.0.2（也是回环，等于不开）。
+      # 不要绑 0.0.0.0：Docker 绕过 ufw，公网只靠安全组一道墙，且服务没有登录。
+      - "${TAILSCALE_IP:-127.0.0.2}:8080:8080"
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1

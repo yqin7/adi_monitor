@@ -52,13 +52,19 @@ git push -u origin release-1.0.0      # 触发部署
 
 ### 查看云上页面（不开公网端口）
 
-服务没有登录页，8080 不对公网开放；本机通过 SSH 隧道访问，固定用 **8181**，与本机开发的 8080 分开：
+服务没有登录页，8080 不对公网开放。两种访问方式：
+
+**Tailscale（推荐）**：服务器与访问设备在同一个 Tailscale 网络里，直接打开
+`http://<服务器 Tailscale IP>:8080/ui/`，手机也可以。服务器侧：`tailscale ip -4` 得到 IP，
+写进 `/opt/adi_monitor/.env` 的 `TAILSCALE_IP`，`docker compose up -d` 生效。
+
+**SSH 隧道（备用）**：固定用 **8181**，与本机开发的 8080 分开：
 
 ```bash
-ssh -N -L 8181:localhost:8080 admin@47.253.220.188
+ssh -N -L 8181:localhost:8080 admin@<服务器公网IP>
 ```
 
-然后打开 http://localhost:8181/ui/ （本机开发仍是 http://localhost:8080/ui/）。不用时 Ctrl+C 关闭隧道。
+然后打开 http://localhost:8181/ui/ 。不用时 Ctrl+C 关闭隧道。
 
 ### 本地构建镜像
 
