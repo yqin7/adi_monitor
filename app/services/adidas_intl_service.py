@@ -19,6 +19,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable
+from urllib.parse import quote
 
 from curl_cffi import requests as cf_requests
 
@@ -43,6 +44,7 @@ SITES: dict[str, tuple[str, str, str, str]] = {
     "ca": ("www.adidas.ca",    "",   "CAD", "加拿大"),
 }
 
+# (slug, 库里的 category 标签, 去重优先级；数字小的优先)
 CATEGORIES = [
     ("men-shoes",      "men-shoes",      0),
     ("women-shoes",    "women-shoes",    0),
@@ -54,6 +56,27 @@ CATEGORIES = [
     ("sale",           "sale",           1),
 ]
 
+# 日本站的 taxonomy 只认日文 slug（「性别-品类」）；传英文 slug 不报错，
+# 而是退化成整站目录：8 个分类抓回同一批 6674 条，去重后全部挂在第一个分类下，
+# 库里日本站就只剩「男鞋」。其他站英文 slug 正常。值来自接口 filterList 的
+# gender_ja_jp / division 取值拼接，2026-09-17 逐个验证过 breadcrumbs 命中。
+SITE_SLUGS: dict[str, dict[str, str]] = {
+    "jp": {
+        "men-shoes":      "メンズ-シューズ・靴",
+        "women-shoes":    "レディース-シューズ・靴",
+        "kids-shoes":     "キッズ／子供用-シューズ・靴",
+        "men-clothing":   "メンズ-ウェア・服",
+        "women-clothing": "レディース-ウェア・服",
+        "kids-clothing":  "キッズ／子供用-ウェア・服",
+        "accessories":    "アクセサリー",
+        "sale":           "セール",
+    },
+}
+
+
+def site_slug(site: str, category: str) -> str:
+    return SITE_SLUGS.get(site, {}).get(category, category)
+
 
 def fetch_page(session: cf_requests.Session, site: str, slug: str, start: int,
                report: Callable[[str], None] | None = None) -> dict | None:
@@ -61,7 +84,7 @@ def fetch_page(session: cf_requests.Session, site: str, slug: str, start: int,
     HTTP 403 这种整站被限流的情况在任务日志和前端都看不见，
     表现成安静的「无数据」。英国站就这么整站漏过一轮。"""
     host, site_path, _, _ = SITES[site]
-    url = f"https://{host}/api/search/taxonomy?sitePath={site_path}&query={slug}&start={start}"
+    url = f"https://{host}/api/search/taxonomy?sitePath={site_path}&query={quote(site_slug(site, slug))}&start={start}"
     last = ""
     for attempt in range(1, MAX_RETRIES + 1):
         try:
