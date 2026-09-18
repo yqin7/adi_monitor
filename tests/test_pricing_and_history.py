@@ -178,3 +178,17 @@ def test_size_table_mode_boundaries():
     # 恰好 8% of 200 触发；199 个可比样本不下结论
     assert run(16, 200, 27)["is_table"] and not run(15, 200, 27)["is_table"]
     assert not run(40, 199, 27)["is_table"]
+
+
+# ── 国际站分类 slug 映射 ─────────────────────────────────────────────────────
+def test_site_slugs_cover_categories_exactly():
+    """日本站的 slug 映射必须和 CATEGORIES 一一对应：
+    少一个分类会静默退回英文 slug（adidas.jp 不报错、返回整站目录，去重后全部挂到第一个分类），
+    多一个则是改名后遗留的死键。"""
+    from app.services.adidas_intl_service import CATEGORIES, SITE_SLUGS, site_slug
+    cats = {c[0] for c in CATEGORIES}
+    for site, mapping in SITE_SLUGS.items():
+        assert set(mapping) == cats, f"{site} 的 SITE_SLUGS 与 CATEGORIES 不一致"
+        assert all(mapping.values()), f"{site} 存在空 slug"
+    assert site_slug("jp", "men-shoes") == "メンズ-シューズ・靴"
+    assert site_slug("gb", "men-shoes") == "men-shoes"     # 无映射的站原样返回
