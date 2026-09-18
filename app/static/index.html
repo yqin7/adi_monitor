@@ -235,7 +235,7 @@
           <option value="30">30 天内</option></select></div>
       <div class="f"><label class="tip" data-tip="得物接口 currency=HKD 的报价。只有在任务页把「查 HKD 口径」设为「是」并跑过得物任务后才有值">香港列</label>
         <select id="showHk"><option value="0">隐藏</option><option value="1">显示</option></select></div>
-      <div class="f"><label class="tip" data-tip="仅韩国站能拿到尺码库存；美国站无此数据，勾选后会全部过滤掉">只显示有货</label>
+      <div class="f"><label class="tip" data-tip="剔除明确断码和未在架的行；加拿大站接口不给尺码库存，显示为「—」的未知行会保留">只显示有货</label>
         <select id="stockOnly"><option value="0">全部</option><option value="1">仅有货</option></select></div>
       <div class="f"><label>&nbsp;</label><button class="ghost" id="reset">重置</button></div>
       <div class="f"><label>&nbsp;</label><button class="ghost" id="clearOv">清除单品自定义</button></div>
@@ -485,7 +485,7 @@ function render() {
     && (r.monthly_sales || 0) >= minSales
     && (minProfit === null || r.profit >= minProfit)
     && (minRoiPct === null || r.roi >= minRoiPct / 100)
-    && (!stockOnly || r.in_stock === true)
+    && (!stockOnly || (r.in_stock !== false && !r.delisted))   // 未知库存（加拿大站不给尺码）保留，只剔除明确断码/未在架
     && (!posCn || r.profit_cn > 0)
     && (!cat || r.category === cat)
     && (!maxAgeH || (r.dewu_age_h != null && r.dewu_age_h <= maxAgeH)));
